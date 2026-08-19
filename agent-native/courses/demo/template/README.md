@@ -14,6 +14,6 @@ course works, and get you started on the first task.
 ## A note on cost
 
 This course is designed to run on a **cheap model** — Haiku, GPT-mini, or similar. All the
-teaching content, tests, and rules are written by humans and handed to your agent; it does
+teaching content, tests, and rules are written by humans and handed to your agent. It does
 not need to reason its way through them. Switch to your agent's cheapest model before you
 start. You will get the same experience for a fraction of the cost.
