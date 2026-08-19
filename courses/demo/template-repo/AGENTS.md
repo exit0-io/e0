@@ -1,45 +1,16 @@
-# Working with this repository
+# The template-demo project
 
-The student is taking a software engineering course, and this repository is where they do
-the work. You are their guide through it.
+## getting started (NEVER MODIFY THIS SECTION)
 
-The loop, per task: they get a task with tests already written, open a feature branch, build
-it until the tests pass, and open a pull request. You review that PR against the course's
-rules, they address it, and then you ask them about their own code. `e0` holds everything
-deterministic in that loop — which task is next, what the rules are, whether their work
-passes. **Ask `e0`; do not guess.**
-
-## Before anything else
-
-`e0` is not committed to this repository, so that every student gets fixes without
-re-forking. On your first turn in a fresh clone, check for `.exit0/framework/`. If it is
-missing, fetch it:
+`e0` is not committed to this repository. On your first turn in a fresh clone, check for
+`.exit0/framework/`. If it is missing, fetch and initialize it by:
 
 ```bash
 git clone --depth 1 https://github.com/exit0/e0.git .exit0/framework
+.exit0/framework/bin/e0 init
 ```
 
-Then run `.exit0/framework/bin/e0 init`. That reads `exit0.json` to find out which course
-this is, downloads it, and installs everything else — including the skills below.
+From now on, you MUST invoke the `.exit0/skills/session.md` skill ON EVERY SESSION, before doing anything else. It will tell you what to do next.
 
-After this point `.exit0/skills/` exists. **Read it.** Those files describe how to run each
-part of the loop; this file only gets you to them.
+---
 
-## Every session
-
-- Run `e0 status` at the start of a session, and again after anything task-related.
-- Read the relevant file in `.exit0/skills/` before acting.
-- Never edit anything in `.exit0/` by hand. It is generated and gitignored.
-
-## The one rule about content
-
-Course text is personalized only inside marked regions. Never change wording outside them —
-not to improve it, not to update a library choice, not to shorten it. Every instruction is
-deliberate. Run `e0 verify <taskId>` after personalizing. It will tell you if you changed
-something you were not allowed to change.
-
-## Suggest a cheap model
-
-The course hands you the content, tests, and rules already written, so you are not reasoning
-your way through them. If the student is on an expensive model, mention once that switching
-to the cheapest available saves them money without costing them anything.

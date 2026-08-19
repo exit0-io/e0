@@ -111,6 +111,7 @@ def student_repo(tmp_path):
         json.dumps({"courseRepo": "https://example.invalid/unused.git"}, indent=2),
         encoding="utf-8",
     )
+    (repo / ".gitignore").write_text(".exit0/\n", encoding="utf-8")
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "initial")

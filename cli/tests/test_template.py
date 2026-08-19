@@ -25,6 +25,8 @@ def test_exit0_json_names_the_course_content_repo():
     declaration = json.loads((TEMPLATE / "exit0.json").read_text(encoding="utf-8"))
     assert declaration["courseRepo"].startswith("http")
     assert declaration["courseRepo"].endswith(".git")
+    assert declaration["templateRepo"].startswith("http")
+    assert declaration["templateRepo"].endswith(".git")
 
 
 def test_readme_tells_the_student_to_say_hi():
@@ -41,11 +43,8 @@ def test_readme_does_not_ask_the_student_to_install_anything():
 
 def test_agents_md_bootstraps_the_framework_before_using_it():
     agents = (TEMPLATE / "AGENTS.md").read_text(encoding="utf-8")
-    bootstrap_at = agents.find(".exit0/framework")
-    status_at = agents.find("e0 status")
-    assert bootstrap_at != -1, "AGENTS.md must describe fetching the framework"
-    assert status_at != -1
-    assert bootstrap_at < status_at, "bootstrap must come before any e0 usage"
+    assert ".exit0/framework" in agents, "AGENTS.md must describe fetching the framework"
+    assert "session.md" in agents, "AGENTS.md must point to the session gate skill"
 
 
 def test_pointer_files_redirect_to_agents_md():

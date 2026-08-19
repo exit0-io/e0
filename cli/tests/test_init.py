@@ -100,7 +100,7 @@ def test_init_succeeds_even_when_the_framework_dir_is_missing(
     assert code == 0
     assert payload["ok"] is True
     # No framework skills installed (dir was missing), but course skills may still be present.
-    framework_skill_names = {"getting-started", "working-on-a-task", "using-the-knowledge-base"}
+    framework_skill_names = {"session", "working-on-a-task", "using-the-knowledge-base"}
     installed = set(payload["data"]["skills"])
     assert installed.isdisjoint(framework_skill_names)
 
@@ -111,29 +111,6 @@ def test_init_reports_the_pinned_tag_and_course_title(run_e0, student_repo, cont
     )
     assert payload["data"]["contentTag"] == "v0.1.0"
     assert payload["data"]["course"]["title"] == "Demo Course"
-
-
-def test_init_adds_exit0_to_gitignore_without_touching_other_lines(
-    run_e0, student_repo, content_repo
-):
-    gitignore = student_repo / ".gitignore"
-    gitignore.write_text("*.pyc\n.venv/\n", encoding="utf-8")
-
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
-
-    lines = gitignore.read_text(encoding="utf-8").splitlines()
-    assert "*.pyc" in lines
-    assert ".venv/" in lines
-    assert ".exit0/" in lines
-
-
-def test_init_does_not_duplicate_the_gitignore_entry(run_e0, student_repo, content_repo):
-    env = {"E0_CONTENT_REPO": str(content_repo)}
-    run_e0(["init"], student_repo, env=env)
-    run_e0(["init"], student_repo, env=env)
-
-    lines = (student_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert lines.count(".exit0/") == 1
 
 
 def test_init_is_idempotent(run_e0, student_repo, content_repo):

@@ -88,8 +88,8 @@ def require_repo(command):
         return None, problem(
             command,
             "e0 can't find a git repository here.",
-            "Please run e0 from inside your course folder. "
-            "If you have not cloned your fork yet, clone it first.",
+            "This means you either run the e0 command from outside your course repo directory,"
+            "or you have not cloned your course project repository yet.",
         )
     return root, None
 
@@ -167,7 +167,7 @@ EXIT0_README = """# .exit0/
 `e0` manages this folder for you. Please don't edit anything in it by hand, and don't
 commit it — it is gitignored on purpose.
 
-You can delete this whole folder at any time. Running `e0 init` again builds it back.
+You can delete this whole folder at any time. Sending 'hi' to the agent builds it back.
 
 - `framework/` the `e0` program and the skills that came with it
 - `course/`    the course you are taking, downloaded and pinned to one version
@@ -294,17 +294,6 @@ def install_skills(root):
             if item.stem not in installed:
                 installed.append(item.stem)
     return installed
-
-
-def ensure_gitignored(root):
-    path = pathlib.Path(root) / ".gitignore"
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
-    if any(line.strip() == ".exit0/" for line in existing.splitlines()):
-        return False
-    prefix = "" if existing == "" or existing.endswith("\n") else "\n"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(f"{prefix}.exit0/\n")
-    return True
 
 
 def read_catalog(root):
@@ -762,9 +751,9 @@ def cmd_init(args):
     if not url:
         return problem(
             "init",
-            "e0 does not know which course this repository is for.",
-            "Your course template should have a file called exit0.json that tells e0 where to find the course. "
-            "If you forked a course template, that file should already be there. "
+            "e0 does not know which project this repository is for.",
+            "Your project template repository should have a file called exit0.json that tells us where to find the course content. "
+            "If you created a this repository from a correct GitHub template repo, that file should already be there. "
             "It looks like this: {\"courseRepo\": \"https://github.com/exit0/your-course-content.git\"}.",
         )
 
@@ -772,9 +761,7 @@ def cmd_init(args):
     if tag is None:
         return problem(
             "init",
-            f"e0 cannot reach the course at {url}.",
-            "Check your internet connection and try again. "
-            "If you are offline, everything you already downloaded will still work.",
+            f"In order to provide you with the course content, e0 needs to be able to reach the course repository at {url}. But it could not.",
         )
 
     try:
@@ -783,14 +770,14 @@ def cmd_init(args):
         return problem(
             "init",
             f"e0 could not download the course: {exc}",
-            "Check your internet connection and try 'e0 init' again.",
+            "If you have a stable internet connection, we suggest you try 'e0 init' again.",
         )
 
     catalog = read_catalog(root)
     if catalog is None:
         return problem(
             "init",
-            "The course e0 downloaded does not have a readable catalog.json file.",
+            "The course e0 downloaded does not have a readable catalog.json file, which contains the list of tasks and their metadata.",
             "This is a problem with the course itself, not with what you did. Please report it.",
         )
 
@@ -798,9 +785,9 @@ def cmd_init(args):
     if not e0_supports(required):
         return problem(
             "init",
-            f"This course needs Exit Zero {required}. You have {E0_VERSION}.",
+            f"This course needs e0 CLI version {required}. You have {E0_VERSION}.",
             "You need to update your framework. Delete the .exit0/framework folder. "
-            "Then ask your agent to run the bootstrap step from AGENTS.md again.",
+            "Then ask your agent to init again.",
         )
 
     profile = read_profile(root) or detect_profile(root)
@@ -810,7 +797,6 @@ def cmd_init(args):
     exit0_dir(root).mkdir(parents=True, exist_ok=True)
     (exit0_dir(root) / "README.md").write_text(EXIT0_README, encoding="utf-8")
     (exit0_dir(root) / "tasks").mkdir(exist_ok=True)
-    added_ignore = ensure_gitignored(root)
 
     course = catalog.get("course", {})
     append_event(root, "initialized", contentTag=tag, course=course.get("id"))
@@ -822,8 +808,7 @@ def cmd_init(args):
             "course": course,
             "profile": profile,
             "skills": skills,
-            "taskCount": len(catalog.get("tasks", [])),
-            "addedGitignoreEntry": added_ignore,
+            "taskCount": len(catalog.get("tasks", []))
         },
         f"Ready. {course.get('title', 'The course')} is set up at {tag} "
         f"with {len(catalog.get('tasks', []))} tasks.",

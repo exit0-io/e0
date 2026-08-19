@@ -4,7 +4,7 @@ import re
 SKILLS = pathlib.Path(__file__).resolve().parents[1] / "skills"
 E0_PATH = pathlib.Path(__file__).resolve().parents[1] / "bin" / "e0"
 
-EXPECTED = {"getting-started", "working-on-a-task", "using-the-knowledge-base"}
+EXPECTED = {"session", "working-on-a-task", "using-the-knowledge-base"}
 
 # Courses hosted by e0. None of these may appear in the CLI or in a framework skill.
 COURSE_NAMES = ("polybot", "yoloservice", "mit2026", "polyaidev", "demo course")
@@ -38,8 +38,8 @@ def test_working_on_a_task_requires_verify_after_personalizing():
     assert text.index("e0 start") < text.index("e0 verify")
 
 
-def test_getting_started_mentions_the_cheap_model():
-    text = (SKILLS / "getting-started.md").read_text(encoding="utf-8").lower()
+def test_session_skill_mentions_the_cheap_model():
+    text = (SKILLS / "session.md").read_text(encoding="utf-8").lower()
     assert "cheap" in text or "cheapest" in text
 
 
