@@ -44,16 +44,21 @@ def test_read_events_on_a_fresh_repo_is_empty(e0mod, student_repo):
     assert e0mod.read_events(student_repo) == []
 
 
-def test_detect_profile_reports_a_known_os(e0mod, student_repo):
+def test_detect_profile_reports_only_the_os(e0mod, student_repo):
+    """os is the only fact e0 can reliably observe on its own."""
     profile = e0mod.detect_profile(student_repo)
+    assert profile == {"os": profile["os"]}
     assert profile["os"] in {"linux", "macos", "windows"}
-    assert "shell" in profile
-    assert profile["testFramework"] in {"pytest", "unittest"}
 
 
-def test_detect_profile_finds_pytest_from_requirements(e0mod, student_repo):
-    (student_repo / "requirements.txt").write_text("pytest==8.0.0\n", encoding="utf-8")
-    assert e0mod.detect_profile(student_repo)["testFramework"] == "pytest"
+def test_shell_and_test_framework_are_set_by_the_student_not_detected(run_e0, student_repo):
+    """These facts come from an onboarding task via profile set, never from detection."""
+    payload, code = run_e0(["profile", "set", "shell", "bash"], student_repo)
+    assert code == 0 and payload["ok"] is True
+    assert payload["data"]["profile"]["shell"] == "bash"
+
+    payload, _ = run_e0(["profile", "set", "testFramework", "pytest"], student_repo)
+    assert payload["data"]["profile"]["testFramework"] == "pytest"
 
 
 def test_profile_get_and_set_via_the_command(run_e0, student_repo):
