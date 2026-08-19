@@ -3912,12 +3912,13 @@ git commit -m "test(e0): end-to-end walkthrough and hostile-environment coverage
 
 ## Post-Review Fixes (Tasks 14–16)
 
-Added 2026-08-19 after a review of the completed skeleton. All three correct the
+Added 2026-08-19 after a review of the completed skeleton. Tasks 14 and 16 correct the
 implementation against decisions the spec already made — see
 `docs/superpowers/specs/2026-08-09-agent-native-learning-design.md`, "Detected facts vs.
-student-set facts," "Plain, respectful language," and the "`e0` is not vendored here"
-paragraph. Nothing here changes the spec's intent; each task brings `bin/e0` back in line
-with it.
+student-set facts" and "Plain, respectful language." Task 15 turned out to be the
+exception: see its note below — the `framework/` nesting it set out to remove was kept
+on reflection, so the spec's "not vendored here" paragraph still describes `framework/`
+as-is and was left untouched.
 
 ### Task 14: Remove Shell and Test-Framework Auto-Detection
 
@@ -4000,174 +4001,30 @@ git commit -m "fix(e0): stop auto-detecting shell; it is a student-set fact like
 
 ---
 
-### Task 15: Flatten `.exit0/` — Remove the `framework/` Subdirectory
+### Task 15: Flatten `.exit0/` — Rejected, `framework/` stays
 
-The spec has always said `e0` lives at `.exit0/bin/` with skills at `.exit0/skills/` — no
-nested `framework/` directory. The walking-skeleton implementation drifted from this:
-`DEFAULT_FRAMEWORK_DIR = ".exit0/framework"`, and `AGENTS.md` instructs cloning the whole
-`e0` repo into `.exit0/framework/`. Nobody asked for that nesting; this task removes it.
+This task originally removed the `.exit0/framework/` nesting (`DEFAULT_FRAMEWORK_DIR`,
+`framework_path`, the `E0_FRAMEWORK_DIR` env var, and the matching `AGENTS.md` bootstrap
+block), on the reasoning that the spec's directory layout never asked for it.
 
-**Target layout:** bootstrapping (the raw `git clone` a fresh agent runs before `e0`
-exists) clones the framework repo to a throwaway location and copies out just `bin/e0` and
-`skills/` directly into `.exit0/bin/` and `.exit0/skills/` — the same throwaway-clone
-mechanism the spec already describes. From that point on, `e0 init` never needs to know
-where the framework's own skills came from; it only ever layers the course's skills on top
-of what's already at `.exit0/skills/`, without wiping it. If the framework's skills ever
-need refreshing, the fix is "delete `.exit0/` and say hi again" — consistent with the
-existing "everything under `.exit0/` is disposable" principle.
+It was implemented, reviewed, and committed, then reverted at the author's request: the
+`framework/` subdirectory is simpler and more efficient in practice — bootstrap clones the
+whole `e0` repo there in one step, `e0 init` always knows exactly where the framework's own
+skills live (`framework/skills/`), and there is no separate dev-only `E0_SOURCE_DIR`
+indirection to reason about. The commit that flattened it (`fix(e0): flatten .exit0/ — drop
+the unrequested framework/ nesting`) was reverted with `git revert`.
 
-**Files:**
-- Modify: `agent-native/e0/bin/e0`
-- Modify: `agent-native/e0/tests/conftest.py`
-- Modify: `agent-native/e0/tests/test_init.py`
-- Modify: `agent-native/e0/tests/test_skills.py`
-- Modify: `agent-native/courses/demo/template/AGENTS.md`
-
-**Interfaces:**
-- Removes: `DEFAULT_FRAMEWORK_DIR`, `framework_path`
-- Changes: `install_skills(root) -> list[str]` — no longer wipes `.exit0/skills/`; layers
-  an optional dev-only source (`E0_SOURCE_DIR`, replacing `E0_FRAMEWORK_DIR`) and then the
-  course's own skills on top of whatever is already there
-- Renames (tests only): `framework_dir` fixture stays, but the env var it sets is now
-  `E0_SOURCE_DIR`
-
-- [ ] **Step 1: Update the tests first**
-
-In `agent-native/e0/tests/test_init.py`, rename the env var in both places it's used:
-
-```python
-def test_init_installs_framework_skills(
-    run_e0, student_repo, content_repo, framework_dir
-):
-    payload, _ = run_e0(
-        ["init"],
-        student_repo,
-        env={
-            "E0_CONTENT_REPO": str(content_repo),
-            "E0_SOURCE_DIR": str(framework_dir),
-        },
-    )
-    assert payload["ok"] is True
-    assert (student_repo / ".exit0" / "skills").is_dir()
-
-
-def test_init_succeeds_even_when_the_framework_dir_is_missing(
-    run_e0, student_repo, content_repo, tmp_path
-):
-    payload, code = run_e0(
-        ["init"],
-        student_repo,
-        env={
-            "E0_CONTENT_REPO": str(content_repo),
-            "E0_SOURCE_DIR": str(tmp_path / "no-source-here"),
-        },
-    )
-    assert code == 0
-    assert payload["ok"] is True
-    assert set(payload["data"]["skills"]) == {"demo-course-notes"}
-```
-
-In `agent-native/e0/tests/test_skills.py`, same rename in
-`test_init_installs_framework_skills_and_layers_course_skills`:
-`"E0_FRAMEWORK_DIR": str(framework_dir)` becomes `"E0_SOURCE_DIR": str(framework_dir)`.
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-Run: `cd agent-native/e0 && python -m pytest tests/test_init.py tests/test_skills.py -v`
-
-Expected: the renamed-env-var tests now install no skills at all, since `bin/e0` still
-reads `E0_FRAMEWORK_DIR`.
-
-- [ ] **Step 3: Rewrite `install_skills` in `bin/e0`**
-
-Remove `DEFAULT_FRAMEWORK_DIR` and `framework_path` entirely, and replace `install_skills`:
-
-```python
-def install_skills(root):
-    """Layer the course's skills over the framework skills already at .exit0/skills/.
-
-    In a real checkout those framework skills were placed by the bootstrap clone
-    described in AGENTS.md, alongside .exit0/bin/e0 — there is no second copy for e0
-    to rebuild them from, so this never wipes the directory. E0_SOURCE_DIR is a
-    dev-only stand-in for that clone, used by local development and the test suite.
-    """
-    destination = exit0_dir(root) / "skills"
-    destination.mkdir(parents=True, exist_ok=True)
-    installed = []
-
-    dev_source = os.environ.get("E0_SOURCE_DIR")
-    sources = [pathlib.Path(dev_source) / "skills"] if dev_source else []
-    sources.append(exit0_dir(root) / "course" / "skills")
-
-    for source in sources:
-        if not source.is_dir():
-            continue
-        for item in sorted(source.glob("*.md")):
-            shutil.copy2(item, destination / item.name)
-            if item.stem not in installed:
-                installed.append(item.stem)
-    return installed
-```
-
-Add `import shutil` to the top-level imports if it is only currently imported inline.
-
-- [ ] **Step 4: Simplify the version-mismatch guidance**
-
-In `cmd_init`, replace the `e0_supports` failure guidance:
-
-```python
-    if not e0_supports(required):
-        return problem(
-            "init",
-            f"This course needs a newer version of e0 than you have ({E0_VERSION}).",
-            "Delete the .exit0 folder and say hi to your agent again. "
-            "It will fetch the newer version for you.",
-        )
-```
-
-- [ ] **Step 5: Run the tests to verify they pass**
-
-Run: `cd agent-native/e0 && python -m pytest -v`
-
-Expected: all tests pass.
-
-- [ ] **Step 6: Rewrite the `AGENTS.md` bootstrap block**
-
-In `agent-native/courses/demo/template/AGENTS.md`, replace the "Before anything else"
-section:
-
-````markdown
-## Before anything else
-
-`e0` is not committed to this repository, so that every student gets fixes without
-re-forking. On your first turn in a fresh clone, check for `.exit0/bin/e0`. If it is
-missing, fetch it:
+**Current, correct state (unchanged from Task 14):** `DEFAULT_FRAMEWORK_DIR =
+".exit0/framework"`, `framework_path(root)` resolves it (overridable via
+`E0_FRAMEWORK_DIR` for tests/dev), `install_skills` copies from `framework_path(root) /
+"skills"` then layers course skills on top, and `AGENTS.md` bootstraps with:
 
 ```bash
-tmp=$(mktemp -d)
-git clone --depth 1 https://github.com/exit0/e0.git "$tmp"
-mkdir -p .exit0/bin .exit0/skills
-cp "$tmp/bin/e0" .exit0/bin/e0
-chmod +x .exit0/bin/e0
-cp "$tmp"/skills/*.md .exit0/skills/
-rm -rf "$tmp"
+git clone --depth 1 https://github.com/exit0/e0.git .exit0/framework
 ```
 
-Then run `.exit0/bin/e0 init`. That reads `exit0.json` to find out which course this is,
-downloads it, and installs everything else.
-
-After this point `.exit0/skills/` also has the course's own skills layered in. **Read it.**
-Those files describe how to run each part of the loop; this file only gets you to them.
-````
-
-- [ ] **Step 7: Run the full suite once more and commit**
-
-Run: `cd agent-native/e0 && python -m pytest -v`
-
-```bash
-git add agent-native/
-git commit -m "fix(e0): flatten .exit0/ — drop the unrequested framework/ nesting"
-```
+then runs `.exit0/framework/bin/e0 init`. No further action needed — this section exists
+only so a future reader doesn't rediscover the same idea and redo the round trip.
 
 ---
 
