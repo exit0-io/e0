@@ -1,0 +1,21 @@
+{
+  "questions": [
+    {
+      "id": "c9f01a55",
+      "topic": "python",
+      "type": "mcq",
+      "prompt": "What does a Python function return when it has no return statement?",
+      "options": ["None", "An empty string", "0", "It raises an error"],
+      "answerHash": "dc937b59892604f5a86ac96936cd7ff09e25f18ae6b758e8014a24c7fa039e91",
+      "reaskAfterDays": 30
+    },
+    {
+      "id": "d3b7c018",
+      "topic": "python",
+      "type": "open",
+      "prompt": "Why does greet() return a value instead of printing it?",
+      "openAnswerOutline": "Returning lets the caller decide what to do with the value; printing couples the function to one output channel and makes it hard to test.",
+      "mandatory": true
+    }
+  ]
+}

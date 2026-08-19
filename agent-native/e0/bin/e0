@@ -1,0 +1,1266 @@
+#!/usr/bin/env python3
+"""e0 — the Exit Zero framework CLI.
+
+Exit Zero hosts courses; this CLI knows nothing about any of them. Single file,
+standard library only. Never crashes: every invocation exits 0 and prints exactly
+one JSON object to stdout.
+"""
+
+import base64
+import datetime
+import hashlib
+import json
+import os
+import pathlib
+import platform
+import re
+import subprocess
+import sys
+
+E0_VERSION = "1.0"
+
+# ---------------------------------------------------------------- envelope
+
+
+def ok(command, data=None, message=""):
+    return {
+        "ok": True,
+        "command": command,
+        "data": data if data is not None else {},
+        "message": message,
+    }
+
+
+def problem(command, problem, guidance, message=None):
+    return {
+        "ok": False,
+        "command": command,
+        "problem": problem,
+        "guidance": guidance,
+        "message": message if message is not None else f"{problem} {guidance}",
+    }
+
+
+# ---------------------------------------------------------------- process
+
+
+def run_git(cwd, *args):
+    """Run a git command. Returns (returncode, stdout, stderr) and never raises."""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except OSError as exc:
+        return 127, "", str(exc)
+
+
+# ---------------------------------------------------------------- paths
+
+
+def repo_root(start=None):
+    """The git top level containing `start`, or None if there is not one."""
+    base = pathlib.Path(start) if start is not None else pathlib.Path.cwd()
+    code, out, _ = run_git(base, "rev-parse", "--show-toplevel")
+    if code != 0 or not out:
+        return None
+    return pathlib.Path(out)
+
+
+def exit0_dir(root):
+    return pathlib.Path(root) / ".exit0"
+
+
+def state_dir(root):
+    return exit0_dir(root) / "state"
+
+
+def require_repo(command):
+    """Return (root, None) or (None, problem_payload)."""
+    root = repo_root()
+    if root is None:
+        return None, problem(
+            command,
+            "e0 could not find a git repository here.",
+            "Run e0 from inside your forked course git repository. "
+            "If you have not cloned it yet, clone your fork first.",
+        )
+    return root, None
+
+
+# ---------------------------------------------------------------- state
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def append_event(root, event, **fields):
+    record = {"ts": _now(), "event": event}
+    record.update(fields)
+    directory = state_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "events.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record) + "\n")
+    return record
+
+
+def read_events(root):
+    path = state_dir(root) / "events.jsonl"
+    if not path.exists():
+        return []
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue  # a corrupted line must never stop the course
+    return events
+
+
+def _detect_os():
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    if system == "windows":
+        return "windows"
+    return "linux"
+
+
+def _detect_shell():
+    shell = os.environ.get("SHELL") or os.environ.get("COMSPEC") or ""
+    return pathlib.Path(shell).name or "unknown"
+
+
+def _detect_test_framework(root):
+    candidates = ["requirements.txt", "requirements-dev.txt", "pyproject.toml", "setup.cfg"]
+    for name in candidates:
+        path = pathlib.Path(root) / name
+        if path.exists() and "pytest" in path.read_text(encoding="utf-8", errors="replace"):
+            return "pytest"
+    return "unittest"
+
+
+def detect_profile(root):
+    return {
+        "os": _detect_os(),
+        "shell": _detect_shell(),
+        "testFramework": _detect_test_framework(root),
+    }
+
+
+def read_profile(root):
+    path = state_dir(root) / "profile.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def write_profile(root, profile):
+    directory = state_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "profile.json").write_text(
+        json.dumps(profile, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+# ---------------------------------------------------------------- course
+
+DEFAULT_FRAMEWORK_DIR = ".exit0/framework"
+
+EXIT0_README = """# .exit0/
+
+This directory is managed by `e0`, the Exit Zero framework CLI. **Do not edit it by hand**
+and do not commit it — it is gitignored on purpose.
+
+Everything here can be deleted and rebuilt. Run `e0 init` to restore it.
+
+- `framework/` the Exit Zero framework itself
+- `course/`    the course you are taking, pinned to a released version
+- `skills/`    how your agent runs the course
+- `tasks/`     your tasks, personalized for your machine
+- `state/`     what you have done so far
+- `bin/`       the `e0` CLI
+
+Some files here are lightly obfuscated — answer keys are stored as hashes, and some
+instructor notes are base64. That is a speed bump, not a lock. If you go looking you
+will find them. We would rather you did not: the questions only help you if you answer
+them honestly.
+"""
+
+
+def read_exit0_json(root):
+    """The template repo's declaration of which course this is."""
+    path = pathlib.Path(root) / "exit0.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def course_repo_url(root):
+    override = os.environ.get("E0_CONTENT_REPO")
+    if override:
+        return override
+    return read_exit0_json(root).get("courseRepo") or None
+
+
+def framework_path(root):
+    override = os.environ.get("E0_FRAMEWORK_DIR")
+    if override:
+        return pathlib.Path(override)
+    return pathlib.Path(root) / DEFAULT_FRAMEWORK_DIR
+
+
+def _version_tuple(value):
+    parts = []
+    for chunk in str(value).split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        if digits == "":
+            return None
+        parts.append(int(digits))
+    return tuple(parts) if parts else None
+
+
+def e0_supports(requirement):
+    """True unless the course demands a newer framework than this one.
+
+    Unparseable or absent requirements are treated as satisfied — refusing to run over a
+    malformed version string would be a dead end for no benefit.
+    """
+    wanted = _version_tuple(requirement) if requirement else None
+    if wanted is None:
+        return True
+    mine = _version_tuple(E0_VERSION) or (0,)
+    return mine >= wanted
+
+
+def latest_tag(url):
+    code, out, _ = run_git(
+        pathlib.Path.cwd(),
+        "ls-remote",
+        "--tags",
+        "--refs",
+        "--sort=-v:refname",
+        url,
+    )
+    if code != 0 or not out:
+        return None
+    first = out.splitlines()[0]
+    if "refs/tags/" not in first:
+        return None
+    return first.split("refs/tags/", 1)[1].strip()
+
+
+def fetch_course(root, url, tag):
+    """Clone the course content repo at `tag` into .exit0/course, replacing what is there."""
+    import shutil
+
+    destination = exit0_dir(root) / "course"
+    staging = exit0_dir(root) / ".course-staging"
+
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.parent.mkdir(parents=True, exist_ok=True)
+
+    code, _, err = run_git(
+        staging.parent, "clone", "--quiet", "--depth", "1", "--branch", tag, url, str(staging)
+    )
+    if code != 0:
+        if staging.exists():
+            shutil.rmtree(staging)
+        raise RuntimeError(err or f"could not clone {url} at {tag}")
+
+    shutil.rmtree(staging / ".git", ignore_errors=True)
+    if destination.exists():
+        shutil.rmtree(destination)
+    staging.rename(destination)
+    return destination
+
+
+def install_skills(root):
+    """Framework skills first, then any course skills layered over them."""
+    import shutil
+
+    destination = exit0_dir(root) / "skills"
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+
+    installed = []
+    for source in (
+        framework_path(root) / "skills",
+        exit0_dir(root) / "course" / "skills",
+    ):
+        if not source.is_dir():
+            continue
+        for item in sorted(source.glob("*.md")):
+            shutil.copy2(item, destination / item.name)
+            if item.stem not in installed:
+                installed.append(item.stem)
+    return installed
+
+
+def ensure_gitignored(root):
+    path = pathlib.Path(root) / ".gitignore"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if any(line.strip() == ".exit0/" for line in existing.splitlines()):
+        return False
+    prefix = "" if existing == "" or existing.endswith("\n") else "\n"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{prefix}.exit0/\n")
+    return True
+
+
+def read_catalog(root):
+    path = exit0_dir(root) / "course" / "catalog.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+
+
+def find_task(catalog, task_id):
+    if not catalog:
+        return None
+    wanted = str(task_id).strip().lower()
+    for task in catalog.get("tasks", []):
+        if task["id"].lower() == wanted:
+            return task
+    return None
+
+
+def task_status(root):
+    """Derive each task's status from the event log. Later events win."""
+    statuses = {}
+    for event in read_events(root):
+        task_id = event.get("taskId")
+        if not task_id:
+            continue
+        if event["event"] == "task_started":
+            statuses[task_id] = "in_progress"
+        elif event["event"] == "task_completed":
+            statuses[task_id] = "complete"
+    return statuses
+
+
+def require_content(command, root):
+    """Return (catalog, None) or (None, problem_payload)."""
+    catalog = read_catalog(root)
+    if catalog is None:
+        return None, problem(
+            command,
+            "The course content is not downloaded yet.",
+            "Run 'e0 init' to download it.",
+        )
+    return catalog, None
+
+
+def next_task(catalog, statuses):
+    ordered = sorted(catalog.get("tasks", []), key=lambda item: item.get("order", 0))
+    for task in ordered:
+        if statuses.get(task["id"]) != "complete":
+            return task
+    return None
+
+
+def unmet_dependencies(task, statuses):
+    return [
+        dependency
+        for dependency in task.get("dependsOn", [])
+        if statuses.get(dependency) != "complete"
+    ]
+
+
+# ---------------------------------------------------------------- markers
+
+OPEN_VARIANT = re.compile(r'^\s*<!--\s*e0:variant\s+id="([^"]+)"\s*-->\s*$')
+CLOSE_VARIANT = re.compile(r"^\s*<!--\s*/e0:variant\s*-->\s*$")
+OPEN_RETONE = re.compile(r'^\s*<!--\s*e0:retone(?:\s+based-on="([^"]*)")?\s*-->\s*$')
+CLOSE_RETONE = re.compile(r"^\s*<!--\s*/e0:retone\s*-->\s*$")
+WHEN = re.compile(r"^\s*<!--\s*when:\s*(.*?)\s*-->\s*$")
+
+
+class MarkerError(Exception):
+    """Raised when region markers are malformed. Callers always catch this."""
+
+
+def parse_when(value):
+    conditions = {}
+    for token in (value or "").split():
+        if "=" not in token:
+            continue
+        key, _, val = token.partition("=")
+        conditions[key.strip()] = val.strip()
+    return conditions
+
+
+def _split_branches(lines):
+    """Turn the inside of a variant block into a list of branches."""
+    has_when = any(WHEN.match(line) for line in lines)
+    if not has_when:
+        # Collapsed variant: agent selected one branch, no when: markers remain.
+        return [{"when": {}, "text": "".join(lines).strip("\n")}]
+
+    branches = []
+    current = None
+    for line in lines:
+        match = WHEN.match(line)
+        if match:
+            current = {"when": parse_when(match.group(1)), "lines": []}
+            branches.append(current)
+            continue
+        if current is None:
+            if line.strip():
+                raise MarkerError(
+                    "content inside a variant block before the first 'when:' marker"
+                )
+            continue
+        current["lines"].append(line)
+    return [
+        {"when": branch["when"], "text": "".join(branch["lines"]).strip("\n")}
+        for branch in branches
+    ]
+
+
+def parse_regions(text):
+    """Split a document into ordered fixed / variant / retone segments.
+
+    Every segment carries `raw`, so concatenating them reproduces the input exactly.
+    """
+    lines = text.splitlines(keepends=True)
+    regions = []
+    buffer = []
+    index = 0
+
+    def flush_fixed():
+        if buffer:
+            blob = "".join(buffer)
+            regions.append({"kind": "fixed", "text": blob, "raw": blob})
+            buffer.clear()
+
+    while index < len(lines):
+        line = lines[index]
+
+        if CLOSE_VARIANT.match(line) or CLOSE_RETONE.match(line):
+            raise MarkerError(f"closing marker without an opening one on line {index + 1}")
+
+        open_variant = OPEN_VARIANT.match(line)
+        open_retone = OPEN_RETONE.match(line)
+
+        if not open_variant and not open_retone:
+            buffer.append(line)
+            index += 1
+            continue
+
+        flush_fixed()
+        opener = line
+        body = []
+        closer_pattern = CLOSE_VARIANT if open_variant else CLOSE_RETONE
+        other_opener = OPEN_RETONE if open_variant else OPEN_VARIANT
+        index += 1
+
+        while index < len(lines) and not closer_pattern.match(lines[index]):
+            if OPEN_VARIANT.match(lines[index]) or other_opener.match(lines[index]):
+                raise MarkerError(f"nested region marker on line {index + 1}")
+            body.append(lines[index])
+            index += 1
+
+        if index >= len(lines):
+            raise MarkerError("region opened but never closed")
+
+        closer = lines[index]
+        index += 1
+        raw = opener + "".join(body) + closer
+
+        if open_variant:
+            regions.append(
+                {
+                    "kind": "variant",
+                    "id": open_variant.group(1),
+                    "branches": _split_branches(body),
+                    "text": "".join(body),
+                    "raw": raw,
+                }
+            )
+        else:
+            regions.append(
+                {
+                    "kind": "retone",
+                    "basedOn": open_retone.group(1) or "",
+                    "text": "".join(body),
+                    "raw": raw,
+                }
+            )
+
+    flush_fixed()
+    return regions
+
+
+def select_branch(branches, facts):
+    for branch in branches:
+        if all(facts.get(key) == value for key, value in branch["when"].items()):
+            return branch
+    return None
+
+
+def verify_document(canonical_text, personalized_text):
+    """Check a personalized document against its canonical form.
+
+    Returns {"violations": [...], "restored": str}. The restored document keeps every
+    legal personalization and reverts everything else.
+    """
+    canonical = parse_regions(canonical_text)
+
+    try:
+        personalized = parse_regions(personalized_text)
+    except MarkerError as exc:
+        return {
+            "violations": [
+                {
+                    "kind": "structure",
+                    "message": f"The document's region markers are malformed: {exc}",
+                }
+            ],
+            "restored": canonical_text,
+        }
+
+    shapes_match = len(canonical) == len(personalized) and all(
+        left["kind"] == right["kind"] for left, right in zip(canonical, personalized)
+    )
+    if not shapes_match:
+        return {
+            "violations": [
+                {
+                    "kind": "structure",
+                    "message": "Regions were added, removed, or reordered. "
+                    "The document has been restored to its original form.",
+                }
+            ],
+            "restored": canonical_text,
+        }
+
+    violations = []
+    rebuilt = []
+
+    for original, edited in zip(canonical, personalized):
+        if original["kind"] == "fixed":
+            if original["raw"] != edited["raw"]:
+                violations.append(
+                    {
+                        "kind": "fixed",
+                        "message": "Text outside an editable region was changed. "
+                        "It has been restored.",
+                    }
+                )
+                rebuilt.append(original["raw"])
+            else:
+                rebuilt.append(edited["raw"])
+
+        elif original["kind"] == "variant":
+            chosen = edited["text"].strip()
+            allowed = [branch["text"].strip() for branch in original["branches"]]
+            if chosen in allowed or chosen == original["text"].strip():
+                rebuilt.append(edited["raw"])
+            else:
+                violations.append(
+                    {
+                        "kind": "variant",
+                        "id": original["id"],
+                        "message": f"Variant '{original['id']}' does not match any "
+                        "declared branch. It has been restored.",
+                    }
+                )
+                rebuilt.append(original["raw"])
+
+        else:  # retone — free text by design
+            rebuilt.append(edited["raw"])
+
+    return {"violations": violations, "restored": "".join(rebuilt)}
+
+
+# ---------------------------------------------------------------- tasks
+
+
+def task_dir(root, task_id):
+    return exit0_dir(root) / "tasks" / task_id.lower()
+
+
+def content_task_dir(root, task_id):
+    return exit0_dir(root) / "course" / "tasks" / task_id.lower()
+
+
+def sha256_file(path):
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+
+def read_task_rules(root, task_id):
+    """Course-wide rules plus this task's rules, decoded if base64."""
+    parts = []
+    for candidate in (
+        exit0_dir(root) / "course" / "rules.md",
+        content_task_dir(root, task_id) / "rules.md",
+    ):
+        if not candidate.exists():
+            continue
+        raw = candidate.read_text(encoding="utf-8")
+        parts.append(_maybe_decode(raw))
+    return "\n\n".join(part.strip() for part in parts if part.strip())
+
+
+def _maybe_decode(raw):
+    """Decode base64-obfuscated rules; return the text unchanged if it is plain."""
+    stripped = "".join(raw.split())
+    if not stripped or not re.fullmatch(r"[A-Za-z0-9+/=]+", stripped):
+        return raw
+    try:
+        return base64.b64decode(stripped, validate=True).decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return raw
+
+
+def copy_checks(root, task_id):
+    """Copy check files into the working copy and verify their hashes."""
+    import shutil
+
+    source = content_task_dir(root, task_id) / "checks"
+    destination = task_dir(root, task_id) / "checks"
+    result = {"copied": [], "mismatched": []}
+    if not source.exists():
+        return result
+
+    destination.mkdir(parents=True, exist_ok=True)
+    spec_path = source / "checks.json"
+    expected = {}
+    if spec_path.exists():
+        try:
+            expected = json.loads(spec_path.read_text(encoding="utf-8")).get("files", {})
+        except ValueError:
+            expected = {}
+
+    for item in sorted(source.iterdir()):
+        if not item.is_file():
+            continue
+        shutil.copy2(item, destination / item.name)
+        result["copied"].append(item.name)
+        if item.name in expected and sha256_file(item) != expected[item.name]:
+            result["mismatched"].append(item.name)
+
+    return result
+
+
+def personalization_payload(canonical_text, profile):
+    """What the agent is permitted to act on — and nothing else."""
+    regions = parse_regions(canonical_text)
+    variants = []
+    retone_blocks = []
+    referenced_keys = set()
+
+    for region in regions:
+        if region["kind"] == "variant":
+            variants.append({"id": region["id"], "branches": region["branches"]})
+            for branch in region["branches"]:
+                referenced_keys.update(branch["when"].keys())
+        elif region["kind"] == "retone":
+            retone_blocks.append({"basedOn": region["basedOn"]})
+
+    facts = {key: profile[key] for key in sorted(referenced_keys) if key in profile}
+    return {"variants": variants, "retoneBlocks": retone_blocks, "facts": facts}
+
+
+def read_checks_spec(root, task_id):
+    path = task_dir(root, task_id) / "checks" / "checks.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+
+
+def check_hashes(root, task_id):
+    """Names of check files whose contents no longer match checks.json."""
+    spec = read_checks_spec(root, task_id)
+    if not spec:
+        return []
+    checks = task_dir(root, task_id) / "checks"
+    drifted = []
+    for name, expected in spec.get("files", {}).items():
+        candidate = checks / name
+        if not candidate.exists() or sha256_file(candidate) != expected:
+            drifted.append(name)
+    return sorted(drifted)
+
+
+def run_checks(root, task_id):
+    """Run the task's checks. Returns (passed, combined_output)."""
+    spec = read_checks_spec(root, task_id)
+    if not spec or not spec.get("run"):
+        return False, "This task has no runnable checks."
+
+    checks = task_dir(root, task_id) / "checks"
+    command = [
+        part.replace("{checks_dir}", str(checks)) for part in spec["run"]
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "The checks took longer than 5 minutes and were stopped."
+    except OSError as exc:
+        return False, f"e0 could not run the checks: {exc}"
+
+    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+
+# ---------------------------------------------------------------- commands
+
+
+def cmd_profile(args):
+    root, failure = require_repo("profile")
+    if failure:
+        return failure
+
+    action = args[0] if args else "get"
+    profile = read_profile(root) or detect_profile(root)
+
+    if action == "get":
+        return ok(
+            "profile",
+            {"profile": profile},
+            "Detected: " + ", ".join(f"{k}={v}" for k, v in sorted(profile.items())),
+        )
+
+    if action == "set":
+        if len(args) < 3:
+            return problem(
+                "profile",
+                "e0 profile set needs a key and a value.",
+                "Use: e0 profile set <key> <value>",
+            )
+        key, value = args[1], args[2]
+        profile[key] = value
+        write_profile(root, profile)
+        append_event(root, "profile_set", key=key, value=value)
+        return ok("profile", {"profile": profile}, f"Recorded {key}={value}.")
+
+    return problem(
+        "profile",
+        f"Unknown profile action '{action}'.",
+        "Use 'e0 profile get' or 'e0 profile set <key> <value>'.",
+    )
+
+
+def cmd_init(args):
+    root, failure = require_repo("init")
+    if failure:
+        return failure
+
+    url = course_repo_url(root)
+    if not url:
+        return problem(
+            "init",
+            "e0 does not know which course this repository belongs to.",
+            "A course template repo declares this in exit0.json at its root, like "
+            '{"courseRepo": "https://github.com/exit0/your-course-content.git"}. '
+            "If you forked a course template, that file should already be there.",
+        )
+
+    tag = latest_tag(url)
+    if tag is None:
+        return problem(
+            "init",
+            f"e0 could not reach the course content at {url}.",
+            "Check your network connection and try again. "
+            "If you are offline, everything already downloaded still works.",
+        )
+
+    try:
+        fetch_course(root, url, tag)
+    except Exception as exc:  # noqa: BLE001
+        return problem(
+            "init",
+            f"e0 could not download the course: {exc}",
+            "Check your network connection and try 'e0 init' again.",
+        )
+
+    catalog = read_catalog(root)
+    if catalog is None:
+        return problem(
+            "init",
+            "The downloaded course has no readable catalog.json.",
+            "This is a problem with the course, not with you. Please report it.",
+        )
+
+    required = catalog.get("requiresE0", "")
+    if not e0_supports(required):
+        return problem(
+            "init",
+            f"This course needs Exit Zero {required}, and you have {E0_VERSION}.",
+            "Update the framework: delete .exit0/framework and let your agent "
+            "re-run the bootstrap step from AGENTS.md.",
+        )
+
+    profile = read_profile(root) or detect_profile(root)
+    write_profile(root, profile)
+    skills = install_skills(root)
+
+    exit0_dir(root).mkdir(parents=True, exist_ok=True)
+    (exit0_dir(root) / "README.md").write_text(EXIT0_README, encoding="utf-8")
+    (exit0_dir(root) / "tasks").mkdir(exist_ok=True)
+    added_ignore = ensure_gitignored(root)
+
+    course = catalog.get("course", {})
+    append_event(root, "initialized", contentTag=tag, course=course.get("id"))
+
+    return ok(
+        "init",
+        {
+            "contentTag": tag,
+            "course": course,
+            "profile": profile,
+            "skills": skills,
+            "taskCount": len(catalog.get("tasks", [])),
+            "addedGitignoreEntry": added_ignore,
+        },
+        f"Ready. {course.get('title', 'The course')} is set up at {tag} "
+        f"with {len(catalog.get('tasks', []))} tasks.",
+    )
+
+
+def cmd_catalog(args):
+    root, failure = require_repo("catalog")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("catalog", root)
+    if failure:
+        return failure
+
+    statuses = task_status(root)
+    tasks = []
+    for task in sorted(catalog.get("tasks", []), key=lambda item: item.get("order", 0)):
+        tasks.append(
+            {
+                "id": task["id"],
+                "title": task["title"],
+                "description": task.get("description", ""),
+                "labels": task.get("labels", []),
+                "dependsOn": task.get("dependsOn", []),
+                "relatedTopics": task.get("relatedTopics", []),
+                "status": statuses.get(task["id"], "not_started"),
+            }
+        )
+
+    done = sum(1 for task in tasks if task["status"] == "complete")
+    return ok(
+        "catalog",
+        {"tasks": tasks, "contentTag": catalog.get("contentTag")},
+        f"{len(tasks)} tasks, {done} complete.",
+    )
+
+
+def cmd_status(args):
+    root, failure = require_repo("status")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("status", root)
+    if failure:
+        return failure
+
+    statuses = task_status(root)
+    current = None
+    for task in catalog.get("tasks", []):
+        if statuses.get(task["id"]) == "in_progress":
+            current = {"id": task["id"], "title": task["title"]}
+            break
+
+    upcoming = next_task(catalog, statuses)
+    upcoming_summary = None
+    if upcoming is not None:
+        upcoming_summary = {
+            "id": upcoming["id"],
+            "title": upcoming["title"],
+            "unmetDependencies": unmet_dependencies(upcoming, statuses),
+        }
+
+    pinned = catalog.get("contentTag")
+    available = latest_tag(course_repo_url(root) or "")
+    if available is None:
+        update = "unknown"
+    elif available != pinned:
+        update = "available"
+    else:
+        update = "current"
+
+    completed = [task_id for task_id, state in statuses.items() if state == "complete"]
+
+    if current:
+        message = f"You are working on {current['id']}: {current['title']}."
+    elif upcoming_summary:
+        message = f"Nothing in progress. Next up is {upcoming_summary['id']}: {upcoming_summary['title']}."
+    else:
+        message = "Every task is complete."
+
+    return ok(
+        "status",
+        {
+            "current": current,
+            "next": upcoming_summary,
+            "completed": sorted(completed),
+            "contentTag": pinned,
+            "latestTag": available,
+            "update": update,
+        },
+        message,
+    )
+
+
+def cmd_start(args):
+    root, failure = require_repo("start")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("start", root)
+    if failure:
+        return failure
+
+    if not args:
+        available = ", ".join(task["id"] for task in catalog.get("tasks", []))
+        return problem(
+            "start",
+            "e0 start needs a task id.",
+            f"Use: e0 start <id>. Available tasks: {available}",
+        )
+
+    task = find_task(catalog, args[0])
+    if task is None:
+        available = ", ".join(item["id"] for item in catalog.get("tasks", []))
+        return problem(
+            "start",
+            f"There is no task called '{args[0]}'.",
+            f"Available tasks: {available}",
+        )
+
+    task_id = task["id"]
+    source = content_task_dir(root, task_id) / "task.md"
+    if not source.exists():
+        return problem(
+            "start",
+            f"Task {task_id} has no task.md in the course content.",
+            "This is a problem with the course, not with you. Please report it.",
+        )
+
+    canonical_text = source.read_text(encoding="utf-8")
+    working = task_dir(root, task_id)
+    working.mkdir(parents=True, exist_ok=True)
+    (working / "task.canonical.md").write_text(canonical_text, encoding="utf-8")
+
+    already_started = (working / "task.md").exists()
+    if not already_started:
+        (working / "task.md").write_text(canonical_text, encoding="utf-8")
+
+    checks = copy_checks(root, task_id)
+
+    statuses = task_status(root)
+    unmet = unmet_dependencies(task, statuses)
+    warnings = []
+    if unmet:
+        warnings.append(
+            {
+                "kind": "dependency",
+                "message": (
+                    f"{task_id} builds on {', '.join(unmet)}, which "
+                    f"{'is' if len(unmet) == 1 else 'are'} not complete yet. "
+                    "You can carry on, but expect to be missing context."
+                ),
+            }
+        )
+        append_event(root, "override", taskId=task_id, unmet=unmet)
+
+    for name in checks["mismatched"]:
+        warnings.append(
+            {
+                "kind": "check_hash",
+                "message": f"The check file {name} does not match its published hash.",
+            }
+        )
+
+    profile = read_profile(root) or detect_profile(root)
+    try:
+        payload = personalization_payload(canonical_text, profile)
+        marker_problem = None
+    except MarkerError as exc:
+        payload = {"variants": [], "retoneBlocks": [], "facts": {}}
+        marker_problem = str(exc)
+        warnings.append(
+            {
+                "kind": "markers",
+                "message": f"The task's personalization markers are malformed ({exc}). "
+                "The task text is still correct; it just will not be personalized.",
+            }
+        )
+
+    append_event(root, "task_started", taskId=task_id)
+
+    body = (
+        f"{task.get('description', '')}\n\n"
+        f"Working through **{task['title']}**.\n\n"
+        f"Task text: `.exit0/tasks/{task_id.lower()}/task.md`"
+    ).strip()
+
+    return ok(
+        "start",
+        {
+            "taskId": task_id,
+            "title": task["title"],
+            "alreadyStarted": already_started,
+            "paths": {
+                "task": f".exit0/tasks/{task_id.lower()}/task.md",
+                "canonical": f".exit0/tasks/{task_id.lower()}/task.canonical.md",
+                "checks": f".exit0/tasks/{task_id.lower()}/checks",
+            },
+            "relatedTopics": task.get("relatedTopics", []),
+            "warnings": warnings,
+            "personalization": payload,
+            "markerProblem": marker_problem,
+            "rules": read_task_rules(root, task_id),
+            "issue": {"title": f"[{task_id}] {task['title']}", "body": body},
+        },
+        f"{task_id} is ready at .exit0/tasks/{task_id.lower()}/task.md.",
+    )
+
+
+def cmd_verify(args):
+    root, failure = require_repo("verify")
+    if failure:
+        return failure
+
+    if not args:
+        return problem(
+            "verify",
+            "e0 verify needs a task id or a file path.",
+            "Use: e0 verify <taskId>  or  e0 verify <path/to/task.md>",
+        )
+
+    target = args[0]
+    candidate = task_dir(root, target) / "task.md"
+    if candidate.exists():
+        personalized_path = candidate
+        canonical_path = task_dir(root, target) / "task.canonical.md"
+    else:
+        personalized_path = pathlib.Path(root) / target
+        canonical_path = personalized_path.with_name(
+            personalized_path.stem + ".canonical" + personalized_path.suffix
+        )
+
+    if not personalized_path.exists() or not canonical_path.exists():
+        return problem(
+            "verify",
+            f"e0 could not find both the document and its canonical copy for '{target}'.",
+            "Run 'e0 start <taskId>' first, which writes both files.",
+        )
+
+    try:
+        result = verify_document(
+            canonical_path.read_text(encoding="utf-8"),
+            personalized_path.read_text(encoding="utf-8"),
+        )
+    except MarkerError as exc:
+        return problem(
+            "verify",
+            f"The canonical document has malformed markers: {exc}",
+            "This is a problem with the course, not with you. Please report it.",
+        )
+
+    if not result["violations"]:
+        return ok(
+            "verify",
+            {"violations": [], "path": str(personalized_path.relative_to(root))},
+            "Personalization is within the contract.",
+        )
+
+    personalized_path.write_text(result["restored"], encoding="utf-8")
+    append_event(
+        root,
+        "verify_restored",
+        path=str(personalized_path.relative_to(root)),
+        count=len(result["violations"]),
+    )
+
+    payload = problem(
+        "verify",
+        "The personalized document changed content it is not allowed to change. "
+        + " ".join(violation["message"] for violation in result["violations"]),
+        "e0 has restored the protected text. Re-apply personalization only inside "
+        "e0:variant and e0:retone regions.",
+    )
+    payload["data"] = {"violations": result["violations"]}
+    return payload
+
+
+def cmd_check(args):
+    root, failure = require_repo("check")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("check", root)
+    if failure:
+        return failure
+
+    if args:
+        task = find_task(catalog, args[0])
+        if task is None:
+            return problem(
+                "check",
+                f"There is no task called '{args[0]}'.",
+                "Run 'e0 catalog' to see the task ids.",
+            )
+        task_id = task["id"]
+    else:
+        statuses = task_status(root)
+        in_progress = [
+            item["id"]
+            for item in catalog.get("tasks", [])
+            if statuses.get(item["id"]) == "in_progress"
+        ]
+        if not in_progress:
+            return problem(
+                "check",
+                "No task is in progress, so e0 does not know what to check.",
+                "Use 'e0 check <taskId>', or 'e0 start <taskId>' to begin one.",
+            )
+        task_id = in_progress[0]
+
+    if not (task_dir(root, task_id) / "checks").exists():
+        return problem(
+            "check",
+            f"The checks for {task_id} are not on disk yet.",
+            f"Run 'e0 start {task_id}' first.",
+        )
+
+    warnings = [
+        {
+            "kind": "check_hash",
+            "message": f"{name} no longer matches the published version. "
+            "Your local result may be misleading — CI always uses the original.",
+        }
+        for name in check_hashes(root, task_id)
+    ]
+
+    passed, output = run_checks(root, task_id)
+    append_event(root, "checks_run", taskId=task_id, passed=passed)
+
+    data = {
+        "taskId": task_id,
+        "passed": passed,
+        "output": output,
+        "warnings": warnings,
+    }
+
+    if passed:
+        return ok("check", data, f"All checks for {task_id} pass.")
+
+    payload = problem(
+        "check",
+        f"The checks for {task_id} are not passing yet.",
+        "Read the failure output, change your code, and run 'e0 check' again.",
+    )
+    payload["data"] = data
+    return payload
+
+
+def cmd_read(args):
+    root, failure = require_repo("read")
+    if failure:
+        return failure
+
+    topic = args[0] if args else ""
+    index = exit0_dir(root) / "course" / "knowledgebase" / "index.json"
+    location = f".exit0/course/knowledgebase/{topic}/tutorial.md" if topic else None
+
+    return problem(
+        "read",
+        "Personalized tutorial delivery is not built yet.",
+        (
+            f"The tutorial is readable right now at {location}. "
+            if location
+            else ""
+        )
+        + f"Available topics are listed in {index.relative_to(root) if index.exists() else 'the course content'}.",
+    )
+
+
+def cmd_help(args):
+    return ok(
+        "help",
+        {"commands": sorted(COMMANDS)},
+        "Available commands: " + ", ".join(sorted(COMMANDS)),
+    )
+
+
+# ---------------------------------------------------------------- dispatch
+
+COMMANDS = {
+    "catalog": cmd_catalog,
+    "check": cmd_check,
+    "help": cmd_help,
+    "init": cmd_init,
+    "profile": cmd_profile,
+    "read": cmd_read,
+    "start": cmd_start,
+    "status": cmd_status,
+    "verify": cmd_verify,
+}
+
+DEFAULT_COMMAND = "status"
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command = argv[0] if argv else DEFAULT_COMMAND
+    rest = argv[1:]
+
+    try:
+        handler = COMMANDS.get(command)
+        if handler is None:
+            result = problem(
+                command,
+                f"Unknown command '{command}'.",
+                "Run 'e0 help' to see what is available.",
+            )
+        else:
+            result = handler(rest)
+    except Exception as exc:  # noqa: BLE001 - the never-crash guarantee lives here
+        result = problem(
+            command,
+            f"e0 hit an unexpected error: {exc.__class__.__name__}: {exc}",
+            "This is a bug in e0. Re-running usually will not help; "
+            "please report it with this message.",
+        )
+
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
