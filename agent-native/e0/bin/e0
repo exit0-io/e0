@@ -516,7 +516,7 @@ def verify_document(canonical_text, personalized_text):
             "violations": [
                 {
                     "kind": "structure",
-                    "message": f"The document's region markers are malformed: {exc}",
+                    "message": f"This document's markers have a problem: {exc}",
                 }
             ],
             "restored": canonical_text,
@@ -530,8 +530,8 @@ def verify_document(canonical_text, personalized_text):
             "violations": [
                 {
                     "kind": "structure",
-                    "message": "Regions were added, removed, or reordered. "
-                    "The document has been restored to its original form.",
+                    "message": "Some parts of the document were added, removed, or moved. "
+                    "e0 put the original text back.",
                 }
             ],
             "restored": canonical_text,
@@ -546,8 +546,8 @@ def verify_document(canonical_text, personalized_text):
                 violations.append(
                     {
                         "kind": "fixed",
-                        "message": "Text outside an editable region was changed. "
-                        "It has been restored.",
+                        "message": "You changed text you were not supposed to change. "
+                        "e0 put it back.",
                     }
                 )
                 rebuilt.append(original["raw"])
@@ -564,8 +564,8 @@ def verify_document(canonical_text, personalized_text):
                     {
                         "kind": "variant",
                         "id": original["id"],
-                        "message": f"Variant '{original['id']}' does not match any "
-                        "declared branch. It has been restored.",
+                        "message": f"Your choice for '{original['id']}' is not one of the options you were given. "
+                        "e0 put the original text back.",
                     }
                 )
                 rebuilt.append(original["raw"])
@@ -730,7 +730,7 @@ def cmd_profile(args):
         return ok(
             "profile",
             {"profile": profile},
-            "Detected: " + ", ".join(f"{k}={v}" for k, v in sorted(profile.items())),
+            "Your profile: " + ", ".join(f"{k}={v}" for k, v in sorted(profile.items())),
         )
 
     if action == "set":

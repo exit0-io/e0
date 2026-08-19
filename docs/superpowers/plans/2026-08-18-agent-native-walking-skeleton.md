@@ -4044,8 +4044,9 @@ guideline so future work doesn't drift back.
 
 - [ ] **Step 1: Rewrite `EXIT0_README` in `bin/e0`**
 
-Replace the obfuscation paragraph and the `framework/` bullet (already gone after Task 15)
-with plain language:
+Task 15 (which would have removed the `framework/` bullet) was rejected — `.exit0/framework/`
+stays. Replace the obfuscation paragraph with plain language, keeping the `framework/` bullet
+(there is no separate `bin/` bullet; `bin/e0` lives inside `framework/`):
 
 ```python
 EXIT0_README = """# .exit0/
@@ -4055,11 +4056,11 @@ commit it — it is gitignored on purpose.
 
 You can delete this whole folder at any time. Running `e0 init` again builds it back.
 
-- `bin/`    the `e0` program
-- `skills/` how your agent runs the course
-- `course/` the course you are taking, downloaded and pinned to one version
-- `tasks/`  your tasks, written for your machine
-- `state/`  what you have done so far
+- `framework/` the `e0` program and the skills that came with it
+- `course/`    the course you are taking, downloaded and pinned to one version
+- `skills/`    how your agent runs the course
+- `tasks/`     your tasks, written for your machine
+- `state/`     what you have done so far
 
 We lightly hide some files, like answer keys and the correct code for a task's rules.
 We do this because we care about your learning. We don't want you to open a file and see
