@@ -51,7 +51,7 @@ def test_init_installs_framework_skills_and_layers_course_skills(
         student_repo,
         env={
             "E0_CONTENT_REPO": str(content_repo),
-            "E0_FRAMEWORK_DIR": str(framework_dir),
+            "E0_SOURCE_DIR": str(framework_dir),
         },
     )
     delivered = {

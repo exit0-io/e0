@@ -12,18 +12,24 @@ passes. **Ask `e0`; do not guess.**
 ## Before anything else
 
 `e0` is not committed to this repository, so that every student gets fixes without
-re-forking. On your first turn in a fresh clone, check for `.exit0/framework/`. If it is
+re-forking. On your first turn in a fresh clone, check for `.exit0/bin/e0`. If it is
 missing, fetch it:
 
 ```bash
-git clone --depth 1 https://github.com/exit0/e0.git .exit0/framework
+tmp=$(mktemp -d)
+git clone --depth 1 https://github.com/exit0/e0.git "$tmp"
+mkdir -p .exit0/bin .exit0/skills
+cp "$tmp/bin/e0" .exit0/bin/e0
+chmod +x .exit0/bin/e0
+cp "$tmp"/skills/*.md .exit0/skills/
+rm -rf "$tmp"
 ```
 
-Then run `.exit0/framework/bin/e0 init`. That reads `exit0.json` to find out which course
-this is, downloads it, and installs everything else — including the skills below.
+Then run `.exit0/bin/e0 init`. That reads `exit0.json` to find out which course this is,
+downloads it, and installs everything else.
 
-After this point `.exit0/skills/` exists. **Read it.** Those files describe how to run each
-part of the loop; this file only gets you to them.
+After this point `.exit0/skills/` also has the course's own skills layered in. **Read it.**
+Those files describe how to run each part of the loop; this file only gets you to them.
 
 ## Every session
 

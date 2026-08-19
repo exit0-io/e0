@@ -79,7 +79,7 @@ def test_init_installs_framework_skills(
         student_repo,
         env={
             "E0_CONTENT_REPO": str(content_repo),
-            "E0_FRAMEWORK_DIR": str(framework_dir),
+            "E0_SOURCE_DIR": str(framework_dir),
         },
     )
     assert payload["ok"] is True
@@ -94,7 +94,7 @@ def test_init_succeeds_even_when_the_framework_dir_is_missing(
         student_repo,
         env={
             "E0_CONTENT_REPO": str(content_repo),
-            "E0_FRAMEWORK_DIR": str(tmp_path / "no-framework-here"),
+            "E0_SOURCE_DIR": str(tmp_path / "no-source-here"),
         },
     )
     assert code == 0

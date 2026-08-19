@@ -17,6 +17,7 @@ import os
 import pathlib
 import platform
 import re
+import shutil
 import subprocess
 import sys
 
@@ -160,8 +161,6 @@ def write_profile(root, profile):
 
 # ---------------------------------------------------------------- course
 
-DEFAULT_FRAMEWORK_DIR = ".exit0/framework"
-
 EXIT0_README = """# .exit0/
 
 This directory is managed by `e0`. **Do not edit it by hand** and do not commit it — it is
@@ -199,13 +198,6 @@ def course_repo_url(root):
     if override:
         return override
     return read_exit0_json(root).get("courseRepo") or None
-
-
-def framework_path(root):
-    override = os.environ.get("E0_FRAMEWORK_DIR")
-    if override:
-        return pathlib.Path(override)
-    return pathlib.Path(root) / DEFAULT_FRAMEWORK_DIR
 
 
 def _version_tuple(value):
@@ -275,19 +267,22 @@ def fetch_course(root, url, tag):
 
 
 def install_skills(root):
-    """Framework skills first, then any course skills layered over them."""
-    import shutil
+    """Layer the course's skills over the framework skills already at .exit0/skills/.
 
+    In a real checkout those framework skills were placed by the bootstrap clone
+    described in AGENTS.md, alongside .exit0/bin/e0 — there is no second copy for e0
+    to rebuild them from, so this never wipes the directory. E0_SOURCE_DIR is a
+    dev-only stand-in for that clone, used by local development and the test suite.
+    """
     destination = exit0_dir(root) / "skills"
-    if destination.exists():
-        shutil.rmtree(destination)
     destination.mkdir(parents=True, exist_ok=True)
-
     installed = []
-    for source in (
-        framework_path(root) / "skills",
-        exit0_dir(root) / "course" / "skills",
-    ):
+
+    dev_source = os.environ.get("E0_SOURCE_DIR")
+    sources = [pathlib.Path(dev_source) / "skills"] if dev_source else []
+    sources.append(exit0_dir(root) / "course" / "skills")
+
+    for source in sources:
         if not source.is_dir():
             continue
         for item in sorted(source.glob("*.md")):
@@ -799,9 +794,9 @@ def cmd_init(args):
     if not e0_supports(required):
         return problem(
             "init",
-            f"This course needs Exit Zero {required}, and you have {E0_VERSION}.",
-            "Update the framework: delete .exit0/framework and let your agent "
-            "re-run the bootstrap step from AGENTS.md.",
+            f"This course needs e0 {required}, but you have {E0_VERSION}.",
+            "Update e0: delete the .exit0 folder and say hi to your agent again. "
+            "It will fetch the newer version for you.",
         )
 
     profile = read_profile(root) or detect_profile(root)
