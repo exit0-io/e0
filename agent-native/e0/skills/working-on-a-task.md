@@ -7,7 +7,7 @@ Use when the student wants to begin or continue a task.
 1. Run `e0 start <taskId>`.
 2. If `warnings` contains a `dependency` entry, relay it honestly and let them choose:
    *"T020 builds on T010, which isn't done. Want to do that first, or push ahead?"*
-   If they push ahead, help them — it is already recorded.
+   If they push ahead, help them — `e0` has already written down that they chose this.
 3. Personalize `task.md` using **only** what `personalization` gives you:
    - For each entry in `variants`, pick the one branch whose `when` conditions match
      `facts`. Delete the others and their `when:` markers. Never write a branch that is

@@ -87,9 +87,9 @@ def require_repo(command):
     if root is None:
         return None, problem(
             command,
-            "e0 could not find a git repository here.",
-            "Run e0 from inside your forked course git repository. "
-            "If you have not cloned it yet, clone your fork first.",
+            "e0 can't find a git repository here.",
+            "Please run e0 from inside your course folder. "
+            "If you have not cloned your fork yet, clone it first.",
         )
     return root, None
 
@@ -164,22 +164,21 @@ DEFAULT_FRAMEWORK_DIR = ".exit0/framework"
 
 EXIT0_README = """# .exit0/
 
-This directory is managed by `e0`. **Do not edit it by hand** and do not commit it — it is
-gitignored on purpose.
+`e0` manages this folder for you. Please don't edit anything in it by hand, and don't
+commit it — it is gitignored on purpose.
 
-Everything here can be deleted and rebuilt. Run `e0 init` to restore it.
+You can delete this whole folder at any time. Running `e0 init` again builds it back.
 
-- `framework/` the `e0` CLI and the skills that drive it
-- `course/`    the course you are taking, pinned to a released version
+- `framework/` the `e0` program and the skills that came with it
+- `course/`    the course you are taking, downloaded and pinned to one version
 - `skills/`    how your agent runs the course
-- `tasks/`     your tasks, personalized for your machine
+- `tasks/`     your tasks, written for your machine
 - `state/`     what you have done so far
-- `bin/`       the `e0` CLI
 
-Some files here are lightly obfuscated — answer keys are stored as hashes, and some
-instructor notes are base64. That is a speed bump, not a lock. If you go looking you
-will find them. We would rather you did not: the questions only help you if you answer
-them honestly.
+We lightly hide some files, like answer keys and the correct code for a task's rules.
+We do this because we care about your learning. We don't want you to open a file and see
+all the answers by accident. If you really want to, you can still find them — we just
+hope you won't. The questions only help you if you answer them yourself, honestly.
 """
 
 
@@ -348,7 +347,7 @@ def require_content(command, root):
     if catalog is None:
         return None, problem(
             command,
-            "The course content is not downloaded yet.",
+            "The course content has not been downloaded yet.",
             "Run 'e0 init' to download it.",
         )
     return catalog, None
@@ -738,7 +737,7 @@ def cmd_profile(args):
         if len(args) < 3:
             return problem(
                 "profile",
-                "e0 profile set needs a key and a value.",
+                "e0 profile set needs two things: a key and a value.",
                 "Use: e0 profile set <key> <value>",
             )
         key, value = args[1], args[2]
@@ -749,7 +748,7 @@ def cmd_profile(args):
 
     return problem(
         "profile",
-        f"Unknown profile action '{action}'.",
+        f"'{action}' is not a profile command.",
         "Use 'e0 profile get' or 'e0 profile set <key> <value>'.",
     )
 
@@ -763,19 +762,19 @@ def cmd_init(args):
     if not url:
         return problem(
             "init",
-            "e0 does not know which course this repository belongs to.",
-            "A course template repo declares this in exit0.json at its root, like "
-            '{"courseRepo": "https://github.com/exit0/your-course-content.git"}. '
-            "If you forked a course template, that file should already be there.",
+            "e0 does not know which course this repository is for.",
+            "Your course template should have a file called exit0.json that tells e0 where to find the course. "
+            "If you forked a course template, that file should already be there. "
+            "It looks like this: {\"courseRepo\": \"https://github.com/exit0/your-course-content.git\"}.",
         )
 
     tag = latest_tag(url)
     if tag is None:
         return problem(
             "init",
-            f"e0 could not reach the course content at {url}.",
-            "Check your network connection and try again. "
-            "If you are offline, everything already downloaded still works.",
+            f"e0 cannot reach the course at {url}.",
+            "Check your internet connection and try again. "
+            "If you are offline, everything you already downloaded will still work.",
         )
 
     try:
@@ -784,24 +783,24 @@ def cmd_init(args):
         return problem(
             "init",
             f"e0 could not download the course: {exc}",
-            "Check your network connection and try 'e0 init' again.",
+            "Check your internet connection and try 'e0 init' again.",
         )
 
     catalog = read_catalog(root)
     if catalog is None:
         return problem(
             "init",
-            "The downloaded course has no readable catalog.json.",
-            "This is a problem with the course, not with you. Please report it.",
+            "The course e0 downloaded does not have a readable catalog.json file.",
+            "This is a problem with the course itself, not with what you did. Please report it.",
         )
 
     required = catalog.get("requiresE0", "")
     if not e0_supports(required):
         return problem(
             "init",
-            f"This course needs Exit Zero {required}, and you have {E0_VERSION}.",
-            "Update the framework: delete .exit0/framework and let your agent "
-            "re-run the bootstrap step from AGENTS.md.",
+            f"This course needs Exit Zero {required}. You have {E0_VERSION}.",
+            "You need to update your framework. Delete the .exit0/framework folder. "
+            "Then ask your agent to run the bootstrap step from AGENTS.md again.",
         )
 
     profile = read_profile(root) or detect_profile(root)
@@ -934,7 +933,7 @@ def cmd_start(args):
         return problem(
             "start",
             "e0 start needs a task id.",
-            f"Use: e0 start <id>. Available tasks: {available}",
+            f"Use: e0 start <id>. The tasks you can start are: {available}",
         )
 
     task = find_task(catalog, args[0])
@@ -943,7 +942,7 @@ def cmd_start(args):
         return problem(
             "start",
             f"There is no task called '{args[0]}'.",
-            f"Available tasks: {available}",
+            f"The tasks you can start are: {available}",
         )
 
     task_id = task["id"]
@@ -951,8 +950,8 @@ def cmd_start(args):
     if not source.exists():
         return problem(
             "start",
-            f"Task {task_id} has no task.md in the course content.",
-            "This is a problem with the course, not with you. Please report it.",
+            f"Task {task_id} does not have a task.md file in the course.",
+            "This is a problem with the course itself, not with what you did. Please report it.",
         )
 
     canonical_text = source.read_text(encoding="utf-8")
@@ -976,7 +975,7 @@ def cmd_start(args):
                 "message": (
                     f"{task_id} builds on {', '.join(unmet)}, which "
                     f"{'is' if len(unmet) == 1 else 'are'} not complete yet. "
-                    "You can carry on, but expect to be missing context."
+                    "You can keep going, but you might be missing important background."
                 ),
             }
         )
@@ -1000,8 +999,8 @@ def cmd_start(args):
         warnings.append(
             {
                 "kind": "markers",
-                "message": f"The task's personalization markers are malformed ({exc}). "
-                "The task text is still correct; it just will not be personalized.",
+                "message": f"The personalization markers in this task have a problem ({exc}). "
+                "The task text is still correct. It just won't be personalized for you.",
             }
         )
 
@@ -1061,8 +1060,8 @@ def cmd_verify(args):
     if not personalized_path.exists() or not canonical_path.exists():
         return problem(
             "verify",
-            f"e0 could not find both the document and its canonical copy for '{target}'.",
-            "Run 'e0 start <taskId>' first, which writes both files.",
+            f"e0 cannot find both the document and its original copy for '{target}'.",
+            "Run 'e0 start <taskId>' first. That command writes both files.",
         )
 
     try:
@@ -1073,15 +1072,15 @@ def cmd_verify(args):
     except MarkerError as exc:
         return problem(
             "verify",
-            f"The canonical document has malformed markers: {exc}",
-            "This is a problem with the course, not with you. Please report it.",
+            f"The original document has markers with a problem: {exc}",
+            "This is a problem with the course itself, not with what you did. Please report it.",
         )
 
     if not result["violations"]:
         return ok(
             "verify",
             {"violations": [], "path": str(personalized_path.relative_to(root))},
-            "Personalization is within the contract.",
+            "Your personalization follows the rules.",
         )
 
     personalized_path.write_text(result["restored"], encoding="utf-8")
@@ -1096,7 +1095,7 @@ def cmd_verify(args):
         "verify",
         "The personalized document changed content it is not allowed to change. "
         + " ".join(violation["message"] for violation in result["violations"]),
-        "e0 has restored the protected text. Re-apply personalization only inside "
+        "e0 has put the protected text back. You can only personalize inside "
         "e0:variant and e0:retone regions.",
     )
     payload["data"] = {"violations": result["violations"]}
@@ -1131,23 +1130,23 @@ def cmd_check(args):
         if not in_progress:
             return problem(
                 "check",
-                "No task is in progress, so e0 does not know what to check.",
-                "Use 'e0 check <taskId>', or 'e0 start <taskId>' to begin one.",
+                "No task is in progress. e0 does not know what to check.",
+                "Use 'e0 check <taskId>', or start a task first with 'e0 start <taskId>'.",
             )
         task_id = in_progress[0]
 
     if not (task_dir(root, task_id) / "checks").exists():
         return problem(
             "check",
-            f"The checks for {task_id} are not on disk yet.",
+            f"The checks for {task_id} have not been downloaded yet.",
             f"Run 'e0 start {task_id}' first.",
         )
 
     warnings = [
         {
             "kind": "check_hash",
-            "message": f"{name} no longer matches the published version. "
-            "Your local result may be misleading — CI always uses the original.",
+            "message": f"{name} does not match the version that was published. "
+            "Your local result might be wrong. CI always uses the original.",
         }
         for name in check_hashes(root, task_id)
     ]
@@ -1168,7 +1167,7 @@ def cmd_check(args):
     payload = problem(
         "check",
         f"The checks for {task_id} are not passing yet.",
-        "Read the failure output, change your code, and run 'e0 check' again.",
+        "Read the output above to see what failed. Fix your code and run 'e0 check' again.",
     )
     payload["data"] = data
     return payload
@@ -1187,11 +1186,11 @@ def cmd_read(args):
         "read",
         "Personalized tutorial delivery is not built yet.",
         (
-            f"The tutorial is readable right now at {location}. "
+            f"You can read the tutorial right now at {location}. "
             if location
             else ""
         )
-        + f"Available topics are listed in {index.relative_to(root) if index.exists() else 'the course content'}.",
+        + f"The list of topics is in {index.relative_to(root) if index.exists() else 'the course content'}.",
     )
 
 
@@ -1230,8 +1229,8 @@ def main(argv=None):
         if handler is None:
             result = problem(
                 command,
-                f"Unknown command '{command}'.",
-                "Run 'e0 help' to see what is available.",
+                f"'{command}' is not a command e0 knows.",
+                "Run 'e0 help' to see what commands you can use.",
             )
         else:
             result = handler(rest)
@@ -1239,8 +1238,8 @@ def main(argv=None):
         result = problem(
             command,
             f"e0 hit an unexpected error: {exc.__class__.__name__}: {exc}",
-            "This is a bug in e0. Re-running usually will not help; "
-            "please report it with this message.",
+            "This is a bug in e0, not something you did wrong. "
+            "Running the command again usually won't help. Please report this message.",
         )
 
     print(json.dumps(result, indent=2))

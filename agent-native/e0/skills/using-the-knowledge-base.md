@@ -11,7 +11,8 @@ one-line summary of each — read it, it is small and always on disk.
 ## When they ask about a covered topic
 
 Say the course covers it, and point them at the tutorial. The course's explanation is the
-one later tasks assume, so improvising a different one sets them up for confusion.
+one later tasks use, so giving them a different one will make those tasks harder to
+understand.
 
 You may still answer their immediate question. Point at the tutorial as well, not instead.
 

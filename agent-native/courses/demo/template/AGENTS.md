@@ -34,9 +34,9 @@ part of the loop; this file only gets you to them.
 ## The one rule about content
 
 Course text is personalized only inside marked regions. Never change wording outside them —
-not to improve it, not to modernize a library choice, not to shorten it. Every instruction
-is deliberate. Run `e0 verify <taskId>` after personalizing; it will tell you if you
-overstepped.
+not to improve it, not to update a library choice, not to shorten it. Every instruction is
+deliberate. Run `e0 verify <taskId>` after personalizing. It will tell you if you changed
+something you were not allowed to change.
 
 ## Suggest a cheap model
 

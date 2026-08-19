@@ -166,4 +166,4 @@ def test_init_with_an_unreachable_course_repo_is_a_problem_not_a_crash(
 def test_init_writes_a_warning_readme(run_e0, student_repo, content_repo):
     run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
     readme = (student_repo / ".exit0" / "README.md").read_text(encoding="utf-8")
-    assert "do not edit" in readme.lower()
+    assert "don't edit" in readme.lower()

@@ -82,4 +82,4 @@ def test_commands_outside_a_git_repo_give_guidance(run_e0, tmp_path):
     payload, code = run_e0(["profile", "get"], outside)
     assert code == 0
     assert payload["ok"] is False
-    assert "git" in payload["guidance"].lower()
+    assert "course" in payload["guidance"].lower()
