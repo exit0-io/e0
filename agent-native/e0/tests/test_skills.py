@@ -6,7 +6,7 @@ E0_PATH = pathlib.Path(__file__).resolve().parents[1] / "bin" / "e0"
 
 EXPECTED = {"getting-started", "working-on-a-task", "using-the-knowledge-base"}
 
-# Courses hosted by the framework. None of these may appear in framework code or skills.
+# Courses hosted by e0. None of these may appear in the CLI or in a framework skill.
 COURSE_NAMES = ("polybot", "yoloservice", "mit2026", "polyaidev", "demo course")
 
 
@@ -24,7 +24,7 @@ def test_skills_only_reference_real_commands():
 
 
 def test_the_framework_names_no_course():
-    """Exit Zero hosts courses. It must not know any of them by name."""
+    """One e0 serves every course, so it must not hardcode any of them."""
     targets = [E0_PATH, *SKILLS.glob("*.md")]
     for path in targets:
         text = path.read_text(encoding="utf-8").lower()

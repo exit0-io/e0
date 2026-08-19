@@ -1,16 +1,16 @@
 # Exit Zero
 
-An agent-native learning **framework**. It hosts courses; it is not one.
+An agent-native learning framework.
 
 | Directory | Becomes | Contents |
 |---|---|---|
-| `e0/` | `exit0/e0` | The framework: the CLI and the skills that drive it. Course-agnostic. |
+| `e0/` | `exit0/e0` | The CLI and the skills that drive it |
 | `courses/demo/template/` | `exit0/demo-template` | What a student of the demo course forks |
 | `e0/tests/fixtures/course/` | `exit0/demo-content` | The demo course's content, doubling as the test fixture |
 
-A course is a content repo plus a template repo. The template names its course in `exit0.json`,
-which is how a course-agnostic framework learns what it is running. Adding a course requires no
-change to `e0`; fixing `e0` requires republishing no course.
+A course is a content repo (tasks, tutorials, question banks, checks) plus a template repo
+students fork. The template names its course in `exit0.json`. `e0` ships separately from any
+course, so one CLI fix reaches every student and a new course needs no change to `e0`.
 
 Nothing outside this directory is part of this work. `services/`, `projects/`, and
 `pr-evaluation-action/` belong to the earlier frontend-native approach and are untouched.

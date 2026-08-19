@@ -66,7 +66,7 @@ def test_every_task_directory_has_checks():
 
 
 def test_catalog_declares_its_framework_requirement():
-    """A course must state the minimum e0 it needs; the framework ships separately."""
+    """e0 is released on its own cadence, so a course must state the minimum it needs."""
     catalog = json.loads((FIXTURE_COURSE / "catalog.json").read_text(encoding="utf-8"))
     assert "requiresE0" in catalog
     assert catalog["course"]["id"]

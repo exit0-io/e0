@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""e0 — the Exit Zero framework CLI.
+"""e0 — the Exit Zero CLI.
 
-Exit Zero hosts courses; this CLI knows nothing about any of them. Single file,
-standard library only. Never crashes: every invocation exits 0 and prints exactly
-one JSON object to stdout.
+Holds everything deterministic in a course: which task is next, what its rules are,
+whether the student's work passes. The agent asks; it does not guess.
+
+Single file, standard library only, no install step. Never crashes: every invocation
+exits 0 and prints exactly one JSON object to stdout, so a failure is something the
+agent can read aloud rather than a dead end.
 """
 
 import base64
@@ -179,12 +182,12 @@ DEFAULT_FRAMEWORK_DIR = ".exit0/framework"
 
 EXIT0_README = """# .exit0/
 
-This directory is managed by `e0`, the Exit Zero framework CLI. **Do not edit it by hand**
-and do not commit it — it is gitignored on purpose.
+This directory is managed by `e0`. **Do not edit it by hand** and do not commit it — it is
+gitignored on purpose.
 
 Everything here can be deleted and rebuilt. Run `e0 init` to restore it.
 
-- `framework/` the Exit Zero framework itself
+- `framework/` the `e0` CLI and the skills that drive it
 - `course/`    the course you are taking, pinned to a released version
 - `skills/`    how your agent runs the course
 - `tasks/`     your tasks, personalized for your machine

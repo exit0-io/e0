@@ -21,7 +21,7 @@ def test_template_has_the_required_files():
 
 
 def test_exit0_json_names_the_course_content_repo():
-    """The framework is course-agnostic; the template must say what it belongs to."""
+    """This file is the only thing tying a fork to its course content."""
     declaration = json.loads((TEMPLATE / "exit0.json").read_text(encoding="utf-8"))
     assert declaration["courseRepo"].startswith("http")
     assert declaration["courseRepo"].endswith(".git")

@@ -1,6 +1,6 @@
 # Demo Course
 
-A hands-on course you work through with your coding agent, on the Exit Zero framework.
+A hands-on course you work through with your coding agent using the Exit Zero framework.
 
 ## Getting started
 

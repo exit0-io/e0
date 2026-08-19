@@ -24,7 +24,7 @@ def test_init_creates_the_exit0_tree(run_e0, student_repo, content_repo):
 
 
 def test_init_finds_its_course_from_exit0_json(run_e0, student_repo, content_repo):
-    """The framework is course-agnostic; the template repo names its course."""
+    """A fork reaches its content through exit0.json, so e0 ships separately from courses."""
     (student_repo / "exit0.json").write_text(
         json.dumps({"courseRepo": str(content_repo)}), encoding="utf-8"
     )
