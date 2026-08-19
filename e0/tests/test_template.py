@@ -3,7 +3,7 @@ import pathlib
 import re
 
 TEMPLATE = (
-    pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "template"
+    pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "template-repo"
 )
 E0_PATH = pathlib.Path(__file__).resolve().parents[1] / "bin" / "e0"
 

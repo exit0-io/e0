@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-FIXTURE_COURSE = pathlib.Path(__file__).resolve().parent / "fixtures" / "course"
+FIXTURE_COURSE = pathlib.Path(__file__).resolve().parent.parent.parent / "courses" / "demo" / "content"
 FRAMEWORK_DIR = pathlib.Path(__file__).resolve().parents[1]
 
 E0_PATH = pathlib.Path(__file__).resolve().parent.parent / "bin" / "e0"

@@ -2,7 +2,7 @@ import hashlib
 import json
 import pathlib
 
-FIXTURE_COURSE = pathlib.Path(__file__).resolve().parent / "fixtures" / "course"
+FIXTURE_COURSE = pathlib.Path(__file__).resolve().parent.parent.parent / "courses" / "demo" / "content"
 
 
 def test_no_placeholder_hashes_remain():
