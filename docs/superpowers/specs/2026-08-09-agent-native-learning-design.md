@@ -76,6 +76,23 @@ from the course content repo plus one committed progress file. No state is born 
 **Advisory, not blocking.** A student who wants to attempt task 60 after task 1 may. The system
 warns, explains, records the override, and gets out of the way.
 
+**Detected facts vs. student-set facts.** `profile.json` holds two different kinds of fact, and
+the system must not confuse them. Some facts `e0` can observe on its own — the operating system
+is the only one so far. Everything else — which shell the student ends up running in, which test
+framework the course has them adopt — is set explicitly, by the student or by an onboarding task,
+via `e0 profile set <key> <value>`. `e0` never guesses at a fact it cannot reliably observe, and
+never silently records one the student hasn't confirmed. A course that needs a student on a
+specific shell (say, Windows students working through WSL in a DevOps course) teaches that as
+part of an onboarding task — using the existing `os`-keyed variant mechanism to give OS-specific
+instructions — and has the student (or the agent, once setup is confirmed) record the outcome
+with `e0 profile set shell bash`. No separate mechanism is needed.
+
+**Plain, respectful language.** Every word the student reads — CLI messages, READMEs, skills,
+task text `e0` itself owns — is written for someone who is still learning English, not just
+still learning to code. Short sentences. Common words. No idioms, no cleverness, no jargon
+without an explanation. State what happened and why it matters, plainly. This is not a tone
+preference; it is a way of taking the student's learning process seriously.
+
 ---
 
 ## Architecture
@@ -236,6 +253,9 @@ exit0/<course-template-repo>/
 on, and anyone who never updated would stay frozen indefinitely. It is curled from the framework
 repo's latest release at bootstrap and lives in gitignored `.exit0/bin/`. Because the framework
 is released independently of any course, one `e0` fix reaches every student of every course.
+Bootstrapping clones the framework repo to a throwaway location and copies out just `bin/e0` and
+`skills/` into `.exit0/bin/` and `.exit0/skills/` — there is no `.exit0/framework/` subdirectory;
+the framework's own tests and other repo scaffolding never leave the throwaway clone.
 
 Compatibility runs the other way: a course's `catalog.json` declares `requiresE0`, and `e0`
 refuses — clearly, with guidance — to run a course that needs a newer framework than the one
@@ -296,7 +316,7 @@ unit tests are part of the product.
 
 | Command | Behavior |
 |---|---|
-| `e0 init` | Detect OS/shell/tooling; fetch content at latest tag; restore `progress.json` from `origin/exit0-progress` if present; write `.exit0/` |
+| `e0 init` | Detect the OS; fetch content at latest tag; restore `progress.json` from `origin/exit0-progress` if present; write `.exit0/` |
 | `e0 status` | Current task, what's next and why, pending comprehension checks, questions due for re-ask. Checks for a content update on a best-effort basis — offline or unreachable is reported as "unknown", never as an error |
 | `e0 catalog` | Every task with status and dependencies |
 | `e0 start <id>` | Advisory dependency check; copy canonical task + checks; verify check hashes; emit the personalization payload and the issue title/body for the agent |

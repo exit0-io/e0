@@ -3910,6 +3910,394 @@ git commit -m "test(e0): end-to-end walkthrough and hostile-environment coverage
 
 ---
 
+## Post-Review Fixes (Tasks 14–16)
+
+Added 2026-08-19 after a review of the completed skeleton. All three correct the
+implementation against decisions the spec already made — see
+`docs/superpowers/specs/2026-08-09-agent-native-learning-design.md`, "Detected facts vs.
+student-set facts," "Plain, respectful language," and the "`e0` is not vendored here"
+paragraph. Nothing here changes the spec's intent; each task brings `bin/e0` back in line
+with it.
+
+### Task 14: Remove Shell and Test-Framework Auto-Detection
+
+`detect_profile` currently detects `shell` (from `$SHELL`/`COMSPEC`) and `testFramework`
+(by grepping `requirements.txt`) and stores both. Neither belongs there. Which shell a
+student ends up running in, and which test framework a course has them adopt, are facts
+the student or an onboarding task sets explicitly with `e0 profile set` — not something
+`e0` should guess and silently record. (`testFramework` detection has already been removed
+by hand from `bin/e0`; this task catches up the tests and finishes the `shell` half.)
+
+A course that needs students on a specific shell — say, Windows students working through
+WSL in a DevOps course — teaches that as its own onboarding task, using the existing
+`os`-keyed `e0:variant` mechanism to give OS-specific setup instructions (install WSL,
+switch the VS Code terminal profile, etc.). Once the student confirms setup, the task has
+the agent run `e0 profile set shell bash`. No new `e0` mechanism is needed — this is the
+same pattern `testFramework` already uses.
+
+**Files:**
+- Modify: `agent-native/e0/bin/e0`
+- Modify: `agent-native/e0/tests/test_state.py`
+
+**Interfaces:**
+- Removes: `_detect_shell`
+- Changes: `detect_profile(root) -> dict` now returns only `{"os": ...}`
+
+- [ ] **Step 1: Update the tests**
+
+In `agent-native/e0/tests/test_state.py`, replace the two tests that assume detection of
+`shell` and `testFramework`:
+
+```python
+def test_detect_profile_reports_only_the_os(e0mod, student_repo):
+    """os is the only fact e0 can reliably observe on its own."""
+    profile = e0mod.detect_profile(student_repo)
+    assert profile == {"os": profile["os"]}
+    assert profile["os"] in {"linux", "macos", "windows"}
+
+
+def test_shell_and_test_framework_are_set_by_the_student_not_detected(run_e0, student_repo):
+    """These facts come from an onboarding task via profile set, never from detection."""
+    payload, code = run_e0(["profile", "set", "shell", "bash"], student_repo)
+    assert code == 0 and payload["ok"] is True
+    assert payload["data"]["profile"]["shell"] == "bash"
+
+    payload, _ = run_e0(["profile", "set", "testFramework", "pytest"], student_repo)
+    assert payload["data"]["profile"]["testFramework"] == "pytest"
+```
+
+Delete `test_detect_profile_reports_a_known_os` and
+`test_detect_profile_finds_pytest_from_requirements` — they test behavior that no longer
+exists.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd agent-native/e0 && python -m pytest tests/test_state.py -v`
+
+Expected: the two new tests fail — `detect_profile` still returns `shell`.
+
+- [ ] **Step 3: Remove `_detect_shell`**
+
+In `agent-native/e0/bin/e0`, delete `_detect_shell` and update `detect_profile`:
+
+```python
+def detect_profile(root):
+    return {"os": _detect_os()}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `cd agent-native/e0 && python -m pytest -v`
+
+Expected: all tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add agent-native/
+git commit -m "fix(e0): stop auto-detecting shell; it is a student-set fact like testFramework"
+```
+
+---
+
+### Task 15: Flatten `.exit0/` — Remove the `framework/` Subdirectory
+
+The spec has always said `e0` lives at `.exit0/bin/` with skills at `.exit0/skills/` — no
+nested `framework/` directory. The walking-skeleton implementation drifted from this:
+`DEFAULT_FRAMEWORK_DIR = ".exit0/framework"`, and `AGENTS.md` instructs cloning the whole
+`e0` repo into `.exit0/framework/`. Nobody asked for that nesting; this task removes it.
+
+**Target layout:** bootstrapping (the raw `git clone` a fresh agent runs before `e0`
+exists) clones the framework repo to a throwaway location and copies out just `bin/e0` and
+`skills/` directly into `.exit0/bin/` and `.exit0/skills/` — the same throwaway-clone
+mechanism the spec already describes. From that point on, `e0 init` never needs to know
+where the framework's own skills came from; it only ever layers the course's skills on top
+of what's already at `.exit0/skills/`, without wiping it. If the framework's skills ever
+need refreshing, the fix is "delete `.exit0/` and say hi again" — consistent with the
+existing "everything under `.exit0/` is disposable" principle.
+
+**Files:**
+- Modify: `agent-native/e0/bin/e0`
+- Modify: `agent-native/e0/tests/conftest.py`
+- Modify: `agent-native/e0/tests/test_init.py`
+- Modify: `agent-native/e0/tests/test_skills.py`
+- Modify: `agent-native/courses/demo/template/AGENTS.md`
+
+**Interfaces:**
+- Removes: `DEFAULT_FRAMEWORK_DIR`, `framework_path`
+- Changes: `install_skills(root) -> list[str]` — no longer wipes `.exit0/skills/`; layers
+  an optional dev-only source (`E0_SOURCE_DIR`, replacing `E0_FRAMEWORK_DIR`) and then the
+  course's own skills on top of whatever is already there
+- Renames (tests only): `framework_dir` fixture stays, but the env var it sets is now
+  `E0_SOURCE_DIR`
+
+- [ ] **Step 1: Update the tests first**
+
+In `agent-native/e0/tests/test_init.py`, rename the env var in both places it's used:
+
+```python
+def test_init_installs_framework_skills(
+    run_e0, student_repo, content_repo, framework_dir
+):
+    payload, _ = run_e0(
+        ["init"],
+        student_repo,
+        env={
+            "E0_CONTENT_REPO": str(content_repo),
+            "E0_SOURCE_DIR": str(framework_dir),
+        },
+    )
+    assert payload["ok"] is True
+    assert (student_repo / ".exit0" / "skills").is_dir()
+
+
+def test_init_succeeds_even_when_the_framework_dir_is_missing(
+    run_e0, student_repo, content_repo, tmp_path
+):
+    payload, code = run_e0(
+        ["init"],
+        student_repo,
+        env={
+            "E0_CONTENT_REPO": str(content_repo),
+            "E0_SOURCE_DIR": str(tmp_path / "no-source-here"),
+        },
+    )
+    assert code == 0
+    assert payload["ok"] is True
+    assert set(payload["data"]["skills"]) == {"demo-course-notes"}
+```
+
+In `agent-native/e0/tests/test_skills.py`, same rename in
+`test_init_installs_framework_skills_and_layers_course_skills`:
+`"E0_FRAMEWORK_DIR": str(framework_dir)` becomes `"E0_SOURCE_DIR": str(framework_dir)`.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd agent-native/e0 && python -m pytest tests/test_init.py tests/test_skills.py -v`
+
+Expected: the renamed-env-var tests now install no skills at all, since `bin/e0` still
+reads `E0_FRAMEWORK_DIR`.
+
+- [ ] **Step 3: Rewrite `install_skills` in `bin/e0`**
+
+Remove `DEFAULT_FRAMEWORK_DIR` and `framework_path` entirely, and replace `install_skills`:
+
+```python
+def install_skills(root):
+    """Layer the course's skills over the framework skills already at .exit0/skills/.
+
+    In a real checkout those framework skills were placed by the bootstrap clone
+    described in AGENTS.md, alongside .exit0/bin/e0 — there is no second copy for e0
+    to rebuild them from, so this never wipes the directory. E0_SOURCE_DIR is a
+    dev-only stand-in for that clone, used by local development and the test suite.
+    """
+    destination = exit0_dir(root) / "skills"
+    destination.mkdir(parents=True, exist_ok=True)
+    installed = []
+
+    dev_source = os.environ.get("E0_SOURCE_DIR")
+    sources = [pathlib.Path(dev_source) / "skills"] if dev_source else []
+    sources.append(exit0_dir(root) / "course" / "skills")
+
+    for source in sources:
+        if not source.is_dir():
+            continue
+        for item in sorted(source.glob("*.md")):
+            shutil.copy2(item, destination / item.name)
+            if item.stem not in installed:
+                installed.append(item.stem)
+    return installed
+```
+
+Add `import shutil` to the top-level imports if it is only currently imported inline.
+
+- [ ] **Step 4: Simplify the version-mismatch guidance**
+
+In `cmd_init`, replace the `e0_supports` failure guidance:
+
+```python
+    if not e0_supports(required):
+        return problem(
+            "init",
+            f"This course needs a newer version of e0 than you have ({E0_VERSION}).",
+            "Delete the .exit0 folder and say hi to your agent again. "
+            "It will fetch the newer version for you.",
+        )
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `cd agent-native/e0 && python -m pytest -v`
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Rewrite the `AGENTS.md` bootstrap block**
+
+In `agent-native/courses/demo/template/AGENTS.md`, replace the "Before anything else"
+section:
+
+````markdown
+## Before anything else
+
+`e0` is not committed to this repository, so that every student gets fixes without
+re-forking. On your first turn in a fresh clone, check for `.exit0/bin/e0`. If it is
+missing, fetch it:
+
+```bash
+tmp=$(mktemp -d)
+git clone --depth 1 https://github.com/exit0/e0.git "$tmp"
+mkdir -p .exit0/bin .exit0/skills
+cp "$tmp/bin/e0" .exit0/bin/e0
+chmod +x .exit0/bin/e0
+cp "$tmp"/skills/*.md .exit0/skills/
+rm -rf "$tmp"
+```
+
+Then run `.exit0/bin/e0 init`. That reads `exit0.json` to find out which course this is,
+downloads it, and installs everything else.
+
+After this point `.exit0/skills/` also has the course's own skills layered in. **Read it.**
+Those files describe how to run each part of the loop; this file only gets you to them.
+````
+
+- [ ] **Step 7: Run the full suite once more and commit**
+
+Run: `cd agent-native/e0 && python -m pytest -v`
+
+```bash
+git add agent-native/
+git commit -m "fix(e0): flatten .exit0/ — drop the unrequested framework/ nesting"
+```
+
+---
+
+### Task 16: Plain-Language Pass
+
+Every string a student reads should be written the way a good instructor talks to someone
+who is still learning English — short sentences, common words, no idioms, explain the
+"why" plainly. This task rewrites `e0`'s own text to that standard and adds a standing
+guideline so future work doesn't drift back.
+
+**Files:**
+- Modify: `agent-native/e0/bin/e0` — every `ok(...)`/`problem(...)` message string, and
+  `EXIT0_README`
+- Modify: `agent-native/e0/skills/*.md`
+- Modify: `agent-native/courses/demo/template/README.md`, `AGENTS.md`
+- Create: `AGENTS.md` (repository root)
+
+- [ ] **Step 1: Rewrite `EXIT0_README` in `bin/e0`**
+
+Replace the obfuscation paragraph and the `framework/` bullet (already gone after Task 15)
+with plain language:
+
+```python
+EXIT0_README = """# .exit0/
+
+`e0` manages this folder for you. Please don't edit anything in it by hand, and don't
+commit it — it is gitignored on purpose.
+
+You can delete this whole folder at any time. Running `e0 init` again builds it back.
+
+- `bin/`    the `e0` program
+- `skills/` how your agent runs the course
+- `course/` the course you are taking, downloaded and pinned to one version
+- `tasks/`  your tasks, written for your machine
+- `state/`  what you have done so far
+
+We lightly hide some files, like answer keys and the correct code for a task's rules.
+We do this because we care about your learning. We don't want you to open a file and see
+all the answers by accident. If you really want to, you can still find them — we just
+hope you won't. The questions only help you if you answer them yourself, honestly.
+"""
+```
+
+- [ ] **Step 2: Rewrite every `ok`/`problem` message in `bin/e0`**
+
+Go through every call to `ok(...)` and `problem(...)` in command order (`cmd_profile`,
+`cmd_init`, `cmd_catalog`, `cmd_status`, `cmd_start`, `cmd_verify`, `cmd_check`, `cmd_read`,
+`cmd_help`, plus `require_repo`/`require_content` and the `main` dispatcher). For each
+`problem`, keep the same meaning but write it the way you'd explain it out loud to someone
+new to English: short sentences, no semicolons doing double duty, no words like "advisory,"
+"idempotent," or "speed bump." For example:
+
+```python
+# before
+"e0 could not find a git repository here.",
+"Run e0 from inside your forked course git repository. "
+"If you have not cloned it yet, clone your fork first.",
+
+# after
+"e0 can't find a git repository here.",
+"Please run e0 from inside your course folder. "
+"If you have not cloned your fork yet, clone it first.",
+```
+
+Apply the same treatment to every other `problem(...)`/`ok(...)` message and to docstrings
+that double as guidance (e.g. `e0_supports`'s comment can stay technical since it's for
+developers, not students — only rewrite text a *student* actually sees).
+
+- [ ] **Step 3: Run the tests to verify they still pass**
+
+Run: `cd agent-native/e0 && python -m pytest -v`
+
+Wording changes should not break any assertion that checks for exact substrings; if one
+does, update the test's expected substring rather than reverting the wording.
+
+- [ ] **Step 4: Pass over the skills and template docs**
+
+Reread `agent-native/e0/skills/getting-started.md`, `working-on-a-task.md`,
+`using-the-knowledge-base.md`, and `agent-native/courses/demo/template/README.md` and
+`AGENTS.md`. Simplify any sentence a learner with limited English would have to re-read
+twice. Keep the content identical in meaning — this is a wording pass, not a rewrite of
+what the skills instruct.
+
+- [ ] **Step 5: Create the root `AGENTS.md`**
+
+Create `/AGENTS.md` at the repository root (this governs contributors working on `e0`
+itself, not students — the student-facing `AGENTS.md` lives in
+`agent-native/courses/demo/template/`):
+
+```markdown
+# Working in this repository
+
+This repo builds Exit Zero: a CLI (`e0`) and course content that give students an
+agent-native learning experience. Most of what you touch here is eventually read by a
+student who is still learning English, not just still learning to code.
+
+## The one rule for anything a student reads
+
+Write it the way a good instructor talks to a student, with deep respect for their
+learning process. That means:
+
+- Short sentences. One idea per sentence.
+- Common, everyday words. Avoid idioms ("speed bump," "under the hood") and jargon
+  ("idempotent," "advisory") unless you explain them in the same breath.
+- Say what happened and why it matters. Don't be clever; be clear.
+- If you're not sure a sentence is simple enough, read it out loud. If it doesn't sound
+  like something you'd say to a person, rewrite it.
+
+This applies to every `problem()`/`ok()` message in `agent-native/e0/bin/e0`, every file
+in `agent-native/e0/skills/`, and every README or AGENTS.md a student's fork ships with.
+It does not apply to code comments, commit messages, or docs in `docs/`, which are for
+contributors and can use normal technical language.
+
+## Where things live
+
+- `agent-native/e0/` — the `e0` CLI and its skills
+- `agent-native/courses/` — course templates students fork
+- `docs/superpowers/specs/` and `docs/superpowers/plans/` — design and implementation
+  history; read them before changing behavior they describe
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add AGENTS.md agent-native/
+git commit -m "docs(e0): plain-language pass on student-facing text; add contributor AGENTS.md"
+```
+
+---
+
 ## What This Plan Deliberately Leaves Out
 
 These are specified in the design and belong to later plans. They are listed so a reviewer
