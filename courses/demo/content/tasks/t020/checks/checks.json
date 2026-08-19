@@ -1,0 +1,6 @@
+{
+  "run": ["python3", "-m", "pytest", "{checks_dir}", "-v"],
+  "files": {
+    "test_farewell.py": "fab03ef8a131cf70e5c19b9d8f5cbe2b355ee4d035c76845fbc814d8e924f64c"
+  }
+}
