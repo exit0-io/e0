@@ -1,6 +1,0 @@
-[submodule "courses/demo/template"]
-	path = courses/demo/template
-	url = https://github.com/exit0-io/demo.git
-[submodule "courses/demo/content"]
-	path = courses/demo/content
-	url = https://github.com/exit0-io/demo-content.git
