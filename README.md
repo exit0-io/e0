@@ -11,6 +11,13 @@ A student starting a software engineering course by forking a course template, t
 cd e0 && python -m pytest -v
 ```
 
+With coverage:
+
+```bash
+COVERAGE_PROCESS_START=/path/to/cli/setup.cfg python -m coverage run --rcfile=setup.cfg -m pytest -q
+python -m coverage combine --rcfile=setup.cfg && python -m coverage report --rcfile=setup.cfg --include="bin/e0"
+```
+
 ## Commands implemented so far
 
 | Command | Purpose |

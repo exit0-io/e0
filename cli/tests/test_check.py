@@ -2,8 +2,8 @@ import pytest
 
 
 @pytest.fixture
-def started(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def started(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     run_e0(["start", "T010"], student_repo)
     return student_repo
 

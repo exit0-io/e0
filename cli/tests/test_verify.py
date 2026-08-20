@@ -88,8 +88,8 @@ def test_deleting_a_region_is_a_violation(e0mod):
     assert result["restored"] == CANONICAL
 
 
-def test_verify_command_restores_the_file_on_disk(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def test_verify_command_restores_the_file_on_disk(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     run_e0(["start", "T010"], student_repo)
 
     task_file = student_repo / ".exit0" / "tasks" / "t010" / "task.md"
@@ -106,8 +106,8 @@ def test_verify_command_restores_the_file_on_disk(run_e0, student_repo, content_
     assert "**standard library**" in task_file.read_text(encoding="utf-8")
 
 
-def test_verify_command_on_a_clean_document_passes(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def test_verify_command_on_a_clean_document_passes(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     run_e0(["start", "T010"], student_repo)
 
     payload, code = run_e0(["verify", "T010"], student_repo)
@@ -115,8 +115,8 @@ def test_verify_command_on_a_clean_document_passes(run_e0, student_repo, content
     assert payload["ok"] is True
 
 
-def test_verify_without_a_target_is_a_problem(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def test_verify_without_a_target_is_a_problem(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     payload, code = run_e0(["verify"], student_repo)
     assert code == 0
     assert payload["ok"] is False

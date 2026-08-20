@@ -3,26 +3,24 @@ import subprocess
 
 
 def test_a_student_can_go_from_fork_to_passing_checks(
-    run_e0, student_repo, content_repo, e0mod
+    run_e0, student_repo, e0mod
 ):
-    env = {"E0_CONTENT_REPO": str(content_repo)}
-
     # 1. The agent bootstraps the course.
-    payload, code = run_e0(["init"], student_repo, env=env)
+    payload, code = run_e0(["init"], student_repo)
     assert code == 0 and payload["ok"] is True
     assert payload["data"]["taskCount"] == 2
 
     # 2. The agent orients itself.
-    payload, _ = run_e0(["status"], student_repo, env=env)
+    payload, _ = run_e0(["status"], student_repo)
     assert payload["data"]["next"]["id"] == "T010"
     assert payload["data"]["current"] is None
 
     # 3. The student asks what the course covers.
-    payload, _ = run_e0(["catalog"], student_repo, env=env)
+    payload, _ = run_e0(["catalog"], student_repo)
     assert [task["id"] for task in payload["data"]["tasks"]] == ["T010", "T020"]
 
     # 4. The agent starts the first task.
-    payload, _ = run_e0(["start", "T010"], student_repo, env=env)
+    payload, _ = run_e0(["start", "T010"], student_repo)
     assert payload["data"]["warnings"] == []
     facts = payload["data"]["personalization"]["facts"]
     variant = payload["data"]["personalization"]["variants"][0]
@@ -44,11 +42,11 @@ def test_a_student_can_go_from_fork_to_passing_checks(
     task_file.write_text(personalized, encoding="utf-8")
 
     # 6. Verification accepts a legal personalization.
-    payload, code = run_e0(["verify", "T010"], student_repo, env=env)
+    payload, code = run_e0(["verify", "T010"], student_repo)
     assert code == 0 and payload["ok"] is True
 
     # 7. Checks fail before any code is written.
-    payload, _ = run_e0(["check", "T010"], student_repo, env=env)
+    payload, _ = run_e0(["check", "T010"], student_repo)
     assert payload["data"]["passed"] is False
 
     # 8. The student writes the code.
@@ -57,7 +55,7 @@ def test_a_student_can_go_from_fork_to_passing_checks(
     )
 
     # 9. Checks pass.
-    payload, code = run_e0(["check", "T010"], student_repo, env=env)
+    payload, code = run_e0(["check", "T010"], student_repo)
     assert code == 0 and payload["ok"] is True
     assert payload["data"]["passed"] is True
 
@@ -74,10 +72,9 @@ def test_a_student_can_go_from_fork_to_passing_checks(
     assert tracked_changes == [], ".exit0/ must never appear in git status"
 
 
-def test_pedagogical_drift_is_caught_and_reverted(run_e0, student_repo, content_repo):
-    env = {"E0_CONTENT_REPO": str(content_repo)}
-    run_e0(["init"], student_repo, env=env)
-    run_e0(["start", "T010"], student_repo, env=env)
+def test_pedagogical_drift_is_caught_and_reverted(run_e0, student_repo):
+    run_e0(["init"], student_repo)
+    run_e0(["start", "T010"], student_repo)
 
     task_file = student_repo / ".exit0" / "tasks" / "t010" / "task.md"
     task_file.write_text(
@@ -87,7 +84,7 @@ def test_pedagogical_drift_is_caught_and_reverted(run_e0, student_repo, content_
         encoding="utf-8",
     )
 
-    payload, code = run_e0(["verify", "T010"], student_repo, env=env)
+    payload, code = run_e0(["verify", "T010"], student_repo)
 
     assert code == 0
     assert payload["ok"] is False
