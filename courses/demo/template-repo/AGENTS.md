@@ -2,7 +2,7 @@
 
 ## getting started (NEVER MODIFY THIS SECTION)
 
-If `.exit0/e0/bin/e0` is missing, initialize the submodules first:
+If `.exit0/e0/bin/e0` is missing, initialize first by:
 
 ```bash
 git submodule update --init --recursive
