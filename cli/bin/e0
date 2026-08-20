@@ -77,8 +77,12 @@ def exit0_dir(root):
     return pathlib.Path(root) / ".exit0"
 
 
+def content_dir(root):
+    return exit0_dir(root) / "content"
+
+
 def state_dir(root):
-    return exit0_dir(root) / "state"
+    return exit0_dir(root) / "e0" / "state"
 
 
 def require_repo(command):
@@ -160,144 +164,9 @@ def write_profile(root, profile):
 
 # ---------------------------------------------------------------- course
 
-DEFAULT_FRAMEWORK_DIR = ".exit0/framework"
-
-EXIT0_README = """# .exit0/
-
-`e0` manages this folder for you. Please don't edit anything in it by hand, and don't
-commit it — it is gitignored on purpose.
-
-You can delete this whole folder at any time. Sending 'hi' to the agent builds it back.
-
-- `framework/` the `e0` program and the skills that came with it
-- `course/`    the course you are taking, downloaded and pinned to one version
-- `skills/`    how your agent runs the course
-- `tasks/`     your tasks, written for your machine
-- `state/`     what you have done so far
-
-We lightly hide some files, like answer keys and the correct code for a task's rules.
-We do this because we care about your learning. We don't want you to open a file and see
-all the answers by accident. If you really want to, you can still find them — we just
-hope you won't. The questions only help you if you answer them yourself, honestly.
-"""
-
-
-def read_exit0_json(root):
-    """The template repo's declaration of which course this is."""
-    path = pathlib.Path(root) / "exit0.json"
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
-        return {}
-
-
-def course_repo_url(root):
-    override = os.environ.get("E0_CONTENT_REPO")
-    if override:
-        return override
-    return read_exit0_json(root).get("courseRepo") or None
-
-
-def framework_path(root):
-    override = os.environ.get("E0_FRAMEWORK_DIR")
-    if override:
-        return pathlib.Path(override)
-    return pathlib.Path(root) / DEFAULT_FRAMEWORK_DIR
-
-
-def _version_tuple(value):
-    parts = []
-    for chunk in str(value).split("."):
-        digits = "".join(ch for ch in chunk if ch.isdigit())
-        if digits == "":
-            return None
-        parts.append(int(digits))
-    return tuple(parts) if parts else None
-
-
-def e0_supports(requirement):
-    """True unless the course demands a newer framework than this one.
-
-    Unparseable or absent requirements are treated as satisfied — refusing to run over a
-    malformed version string would be a dead end for no benefit.
-    """
-    wanted = _version_tuple(requirement) if requirement else None
-    if wanted is None:
-        return True
-    mine = _version_tuple(E0_VERSION) or (0,)
-    return mine >= wanted
-
-
-def latest_tag(url):
-    code, out, _ = run_git(
-        pathlib.Path.cwd(),
-        "ls-remote",
-        "--tags",
-        "--refs",
-        "--sort=-v:refname",
-        url,
-    )
-    if code != 0 or not out:
-        return None
-    first = out.splitlines()[0]
-    if "refs/tags/" not in first:
-        return None
-    return first.split("refs/tags/", 1)[1].strip()
-
-
-def fetch_course(root, url, tag):
-    """Clone the course content repo at `tag` into .exit0/course, replacing what is there."""
-    import shutil
-
-    destination = exit0_dir(root) / "course"
-    staging = exit0_dir(root) / ".course-staging"
-
-    if staging.exists():
-        shutil.rmtree(staging)
-    staging.parent.mkdir(parents=True, exist_ok=True)
-
-    code, _, err = run_git(
-        staging.parent, "clone", "--quiet", "--depth", "1", "--branch", tag, url, str(staging)
-    )
-    if code != 0:
-        if staging.exists():
-            shutil.rmtree(staging)
-        raise RuntimeError(err or f"could not clone {url} at {tag}")
-
-    shutil.rmtree(staging / ".git", ignore_errors=True)
-    if destination.exists():
-        shutil.rmtree(destination)
-    staging.rename(destination)
-    return destination
-
-
-def install_skills(root):
-    """Framework skills first, then any course skills layered over them."""
-    import shutil
-
-    destination = exit0_dir(root) / "skills"
-    if destination.exists():
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True, exist_ok=True)
-
-    installed = []
-    for source in (
-        framework_path(root) / "skills",
-        exit0_dir(root) / "course" / "skills",
-    ):
-        if not source.is_dir():
-            continue
-        for item in sorted(source.glob("*.md")):
-            shutil.copy2(item, destination / item.name)
-            if item.stem not in installed:
-                installed.append(item.stem)
-    return installed
-
 
 def read_catalog(root):
-    path = exit0_dir(root) / "course" / "catalog.json"
+    path = content_dir(root) / "catalog.json"
     if not path.exists():
         return None
     try:
@@ -573,7 +442,7 @@ def task_dir(root, task_id):
 
 
 def content_task_dir(root, task_id):
-    return exit0_dir(root) / "course" / "tasks" / task_id.lower()
+    return content_dir(root) / "tasks" / task_id.lower()
 
 
 def sha256_file(path):
@@ -584,7 +453,7 @@ def read_task_rules(root, task_id):
     """Course-wide rules plus this task's rules, decoded if base64."""
     parts = []
     for candidate in (
-        exit0_dir(root) / "course" / "rules.md",
+        content_dir(root) / "rules.md",
         content_task_dir(root, task_id) / "rules.md",
     ):
         if not candidate.exists():
@@ -747,71 +616,30 @@ def cmd_init(args):
     if failure:
         return failure
 
-    url = course_repo_url(root)
-    if not url:
+    if not (content_dir(root) / "catalog.json").exists():
         return problem(
             "init",
-            "e0 does not know which project this repository is for.",
-            "Your project template repository should have a file called exit0.json that tells us where to find the course content. "
-            "If you created a this repository from a correct GitHub template repo, that file should already be there. "
-            "It looks like this: {\"courseRepo\": \"https://github.com/exit0/your-course-content.git\"}.",
-        )
-
-    tag = latest_tag(url)
-    if tag is None:
-        return problem(
-            "init",
-            f"In order to provide you with the course content, e0 needs to be able to reach the course repository at {url}. But it could not.",
-        )
-
-    try:
-        fetch_course(root, url, tag)
-    except Exception as exc:  # noqa: BLE001
-        return problem(
-            "init",
-            f"e0 could not download the course: {exc}",
-            "If you have a stable internet connection, we suggest you try 'e0 init' again.",
-        )
-
-    catalog = read_catalog(root)
-    if catalog is None:
-        return problem(
-            "init",
-            "The course e0 downloaded does not have a readable catalog.json file, which contains the list of tasks and their metadata.",
-            "This is a problem with the course itself, not with what you did. Please report it.",
-        )
-
-    required = catalog.get("requiresE0", "")
-    if not e0_supports(required):
-        return problem(
-            "init",
-            f"This course needs e0 CLI version {required}. You have {E0_VERSION}.",
-            "You need to update your framework. Delete the .exit0/framework folder. "
-            "Then ask your agent to init again.",
+            "The course content is not set up yet.",
+            "Run: git submodule update --init --recursive",
         )
 
     profile = read_profile(root) or detect_profile(root)
     write_profile(root, profile)
-    skills = install_skills(root)
 
-    exit0_dir(root).mkdir(parents=True, exist_ok=True)
-    (exit0_dir(root) / "README.md").write_text(EXIT0_README, encoding="utf-8")
-    (exit0_dir(root) / "tasks").mkdir(exist_ok=True)
-
-    course = catalog.get("course", {})
-    append_event(root, "initialized", contentTag=tag, course=course.get("id"))
+    catalog = read_catalog(root)
+    course = catalog.get("course", {}) if catalog else {}
+    (exit0_dir(root) / "tasks").mkdir(parents=True, exist_ok=True)
+    append_event(root, "initialized", course=course.get("id"))
 
     return ok(
         "init",
         {
-            "contentTag": tag,
             "course": course,
             "profile": profile,
-            "skills": skills,
-            "taskCount": len(catalog.get("tasks", []))
+            "taskCount": len(catalog.get("tasks", [])) if catalog else 0,
         },
-        f"Ready. {course.get('title', 'The course')} is set up at {tag} "
-        f"with {len(catalog.get('tasks', []))} tasks.",
+        f"Ready. {course.get('title', 'The course')} has "
+        f"{len(catalog.get('tasks', [])) if catalog else 0} tasks.",
     )
 
 
@@ -873,13 +701,7 @@ def cmd_status(args):
         }
 
     pinned = catalog.get("contentTag")
-    available = latest_tag(course_repo_url(root) or "")
-    if available is None:
-        update = "unknown"
-    elif available != pinned:
-        update = "available"
-    else:
-        update = "current"
+    update = "unknown"
 
     completed = [task_id for task_id, state in statuses.items() if state == "complete"]
 
@@ -897,7 +719,6 @@ def cmd_status(args):
             "next": upcoming_summary,
             "completed": sorted(completed),
             "contentTag": pinned,
-            "latestTag": available,
             "update": update,
         },
         message,
@@ -1164,8 +985,8 @@ def cmd_read(args):
         return failure
 
     topic = args[0] if args else ""
-    index = exit0_dir(root) / "course" / "knowledgebase" / "index.json"
-    location = f".exit0/course/knowledgebase/{topic}/tutorial.md" if topic else None
+    index = content_dir(root) / "knowledgebase" / "index.json"
+    location = f".exit0/content/knowledgebase/{topic}/tutorial.md" if topic else None
 
     return problem(
         "read",
