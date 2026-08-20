@@ -2,8 +2,8 @@ import pytest
 
 
 @pytest.fixture
-def initialized(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def initialized(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     return student_repo
 
 
@@ -39,8 +39,8 @@ def test_find_task_is_case_insensitive(e0mod, initialized):
     assert e0mod.find_task(catalog, "T999") is None
 
 
-def test_catalog_before_init_gives_guidance(run_e0, student_repo):
-    payload, code = run_e0(["catalog"], student_repo)
+def test_catalog_before_init_gives_guidance(run_e0, bare_student_repo):
+    payload, code = run_e0(["catalog"], bare_student_repo)
     assert code == 0
     assert payload["ok"] is False
     assert "init" in payload["guidance"]

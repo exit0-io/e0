@@ -2,8 +2,8 @@ import pytest
 
 
 @pytest.fixture
-def initialized(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def initialized(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     return student_repo
 
 
@@ -117,3 +117,17 @@ def test_start_does_not_overwrite_an_existing_personalized_task(run_e0, initiali
 
     assert task_file.read_text(encoding="utf-8") == "personalized already\n"
     assert payload["data"]["alreadyStarted"] is True
+
+
+def test_read_command_gives_guidance_and_index_location(run_e0, initialized):
+    payload, code = run_e0(["read", "intro-to-linux"], initialized)
+    assert code == 0
+    assert payload["ok"] is False
+    assert "intro-to-linux" in payload["message"]
+
+
+def test_profile_get_on_fresh_repo_detects_os(run_e0, student_repo):
+    payload, code = run_e0(["profile", "get"], student_repo)
+    assert code == 0
+    assert payload["ok"] is True
+    assert "os" in payload["data"]["profile"]

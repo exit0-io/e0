@@ -31,7 +31,7 @@ def test_append_and_read_events_roundtrip(e0mod, student_repo):
 
 def test_read_events_skips_malformed_lines(e0mod, student_repo):
     e0mod.append_event(student_repo, "task_started", taskId="T010")
-    log = e0mod.exit0_dir(student_repo) / "state" / "events.jsonl"
+    log = e0mod.state_dir(student_repo) / "events.jsonl"
     with log.open("a", encoding="utf-8") as handle:
         handle.write("this is not json\n")
     e0mod.append_event(student_repo, "task_completed", taskId="T010")

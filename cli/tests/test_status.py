@@ -2,8 +2,8 @@ import pytest
 
 
 @pytest.fixture
-def initialized(run_e0, student_repo, content_repo):
-    run_e0(["init"], student_repo, env={"E0_CONTENT_REPO": str(content_repo)})
+def initialized(run_e0, student_repo):
+    run_e0(["init"], student_repo)
     return student_repo
 
 
@@ -40,21 +40,8 @@ def test_unmet_dependencies_lists_incomplete_prerequisites(e0mod, initialized):
     assert e0mod.unmet_dependencies(task, {"T010": "complete"}) == []
 
 
-def test_status_reports_update_availability_as_a_string(run_e0, initialized, content_repo):
-    payload, _ = run_e0(
-        ["status"], initialized, env={"E0_CONTENT_REPO": str(content_repo)}
-    )
-    assert payload["data"]["update"] in {"current", "available", "unknown"}
-
-
-def test_status_says_unknown_when_the_course_repo_is_unreachable(
-    run_e0, initialized, tmp_path
-):
-    payload, code = run_e0(
-        ["status"], initialized, env={"E0_CONTENT_REPO": str(tmp_path / "gone")}
-    )
-    assert code == 0
-    assert payload["ok"] is True
+def test_status_always_reports_update_as_unknown(run_e0, initialized):
+    payload, _ = run_e0(["status"], initialized)
     assert payload["data"]["update"] == "unknown"
 
 
@@ -64,8 +51,17 @@ def test_bare_e0_runs_status(run_e0, initialized):
     assert payload["command"] == "status"
 
 
-def test_status_before_init_gives_guidance(run_e0, student_repo):
-    payload, code = run_e0(["status"], student_repo)
+def test_status_before_init_gives_guidance(run_e0, bare_student_repo):
+    payload, code = run_e0(["status"], bare_student_repo)
     assert code == 0
     assert payload["ok"] is False
     assert "init" in payload["guidance"]
+
+
+def test_status_when_all_tasks_complete(run_e0, initialized, e0mod):
+    e0mod.append_event(initialized, "task_completed", taskId="T010")
+    e0mod.append_event(initialized, "task_completed", taskId="T020")
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["ok"] is True
+    assert payload["data"]["current"] is None
+    assert payload["data"]["next"] is None

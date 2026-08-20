@@ -41,21 +41,3 @@ def test_working_on_a_task_requires_verify_after_personalizing():
 def test_session_skill_mentions_the_cheap_model():
     text = (SKILLS / "session.md").read_text(encoding="utf-8").lower()
     assert "cheap" in text or "cheapest" in text
-
-
-def test_init_installs_framework_skills_and_layers_course_skills(
-    run_e0, student_repo, content_repo, framework_dir
-):
-    run_e0(
-        ["init"],
-        student_repo,
-        env={
-            "E0_CONTENT_REPO": str(content_repo),
-            "E0_FRAMEWORK_DIR": str(framework_dir),
-        },
-    )
-    delivered = {
-        path.stem for path in (student_repo / ".exit0" / "skills").glob("*.md")
-    }
-    assert EXPECTED <= delivered, "framework skills must be installed"
-    assert "demo-course-notes" in delivered, "course skills must layer on top"
