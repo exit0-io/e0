@@ -1,6 +1,0 @@
-{
-  "run": ["python3", "-m", "pytest", "{checks_dir}", "-v"],
-  "files": {
-    "test_greeting.py": "1f7a827c9a5d166926ff5afa78fa79205a776e0e6f0a34d32f2b166c11d3d413"
-  }
-}
