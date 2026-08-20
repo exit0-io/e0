@@ -67,7 +67,7 @@ may add its own skills on top, but does not restate the framework's.
 
 **Determinism in data, fluency in the model.** The system supplies content, learning flow, MCQs, tests and rules. The model's entire job is to personalize this data to match the student's context. When the agent says "task 3 depends on task 2," it read that from
 `catalog.json`; it did not infer it. This is what allows a cheap model (Haiku, GPT-mini) to run
-the whole experience. The `getting-started` skill opens by recommending they switch
+the whole experience. The `session` skill opens by recommending they switch
 their agent to its cheapest model.
 
 **Local-first and rebuildable.** Everything under `.exit0/` can be deleted and reconstructed
@@ -150,7 +150,7 @@ Four planes:
 exit0/e0/                                  # public, tagged releases
   bin/e0                                   # the CLI — curled at bootstrap
   skills/                                  # procedure → synced to .exit0/skills/
-    getting-started.md
+    session.md
     working-on-a-task.md
     using-the-knowledge-base.md
     reviewing-a-pr.md
@@ -246,8 +246,13 @@ exit0/<course-template-repo>/
 `exit0.json` is how a course-agnostic framework learns which course it is running:
 
 ```json
-{ "courseRepo": "https://github.com/exit0/polybot-content.git" }
+{
+  "courseRepo": "https://github.com/exit0/polybot-content.git",
+  "templateRepo": "https://github.com/exit0/polybot-template.git"
+}
 ```
+
+`templateRepo` is the URL of this template repo itself.
 
 **`e0` is not vendored here.** A forked copy would freeze at whatever version the student forked
 on, and anyone who never updated would stay frozen indefinitely. It is cloned from the framework
@@ -273,10 +278,18 @@ toolchain, orienting the student — is the agent's work:
 >
 > That's it. Your agent takes it from here.
 
-This puts one requirement on `AGENTS.md`: it must be self-sufficient *before* `.exit0/` exists.
-Its first instruction is to bootstrap `e0` if it is missing, then run `e0 init`. Every other
-instruction can assume `e0` is present — and can be short, because the real procedure arrives
-with the framework's skills.
+This puts two requirements on `AGENTS.md`:
+
+1. It must be self-sufficient *before* `.exit0/` exists. The bootstrap commands live there
+   because the skills directory does not yet exist.
+2. It must be short. Students may freely modify `AGENTS.md` during the course — adding their
+   own project instructions or adapting it to their workflow. The framework asks only for one
+   short section: read `.exit0/skills/session.md` at the start of every session.
+
+All session behavior — every-session rules, the loop description, the content rules, the
+model suggestion — lives in the `session` skill, which acts as the **gate skill**:
+every agent session is routed through it. A student who replaces the pointer section in
+`AGENTS.md` loses only that line; the skill itself is untouched in `.exit0/`.
 
 ---
 
@@ -609,7 +622,7 @@ below are course-agnostic and never restated per course.
 
 | Skill | Covers |
 |---|---|
-| `getting-started` | The "hi" flow — recommend the cheap model, `e0 init`, orient, first suggestion |
+| `session` | The session gate — recommend the cheap model, `e0 init`, every-session rules, orient, first suggestion |
 | `working-on-a-task` | `start` → personalize → `verify` → TDD loop with `check` |
 | `using-the-knowledge-base` | Fetching a tutorial on request; pointing at covered topics instead of improvising |
 | `reviewing-a-pr` | The "I finished" flow, conduct rules, composing and posting the review |
@@ -617,19 +630,22 @@ below are course-agnostic and never restated per course.
 | `giving-feedback` | Spotting friction, inviting feedback without nagging, composing and filing it |
 | `keeping-current` | The update flow |
 
-The repo root holds `AGENTS.md`, read by Claude Code and Codex. `CLAUDE.md` and
-`.github/copilot-instructions.md` are one-line files pointing at it, so every agent converges on
-the same instructions.
+The repo root holds `AGENTS.md`; `CLAUDE.md` and `.github/copilot-instructions.md` are
+one-line files pointing at it. `AGENTS.md` is short by design: the bootstrap commands for
+a fresh clone, and one section — read `.exit0/skills/session.md` at the start of every
+session. Students may freely add to or modify this file during the course.
 
-`AGENTS.md` is short and imperative: run `e0 status` at the start of a session and after any
-task-related turn; read `.exit0/skills/` before acting; never edit `.exit0/` by hand.
+`session` is the **gate skill**. Every session is routed through it. It carries the loop
+description, every-session rules, the content rules, the model suggestion, and the steps
+for orienting the student. Keeping this in a skill rather than in `AGENTS.md` means a
+student who edits `AGENTS.md` does not accidentally lose the framework's session rules.
 
 ---
 
 ## Conversational Loops
 
-**Onboarding.** Student says "hi". Agent reads `AGENTS.md`, recommends switching to a cheap
-model, then runs `e0 init`. `e0` detects the OS and toolchain, fetches content at
+**Onboarding.** Student says "hi". Agent reads `AGENTS.md`, sees the pointer to
+`session`, reads it, recommends switching to a cheap model, then runs `e0 init`. `e0` detects the OS and toolchain, fetches content at
 the latest tag, restores progress if the orphan branch exists, and returns a state summary. The
 agent greets them with where they are and what's next.
 

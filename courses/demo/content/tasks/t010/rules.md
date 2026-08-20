@@ -1,1 +1,0 @@
-- The greeting must be produced by a function, not printed at module level.
