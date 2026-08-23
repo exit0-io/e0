@@ -9,11 +9,9 @@ exits 0 and prints exactly one JSON object to stdout, so a failure is something 
 agent can read aloud rather than a dead end.
 """
 
-import base64
 import datetime
 import hashlib
 import json
-import os
 import pathlib
 import platform
 import re
@@ -77,12 +75,16 @@ def exit0_dir(root):
     return pathlib.Path(root) / ".exit0"
 
 
-def content_dir(root):
-    return exit0_dir(root) / "content"
-
-
 def state_dir(root):
-    return exit0_dir(root) / "e0" / "state"
+    return exit0_dir(root) / "state"
+
+
+def task_content_dir(root, task_id):
+    return pathlib.Path(root) / "content" / str(task_id).lower()
+
+
+def school_checks_dir(root, task_id):
+    return pathlib.Path(root) / "tests" / "school-checks" / str(task_id).lower()
 
 
 def require_repo(command):
@@ -96,6 +98,46 @@ def require_repo(command):
             "or you have not cloned your course project repository yet.",
         )
     return root, None
+
+
+FRAMEWORK_SKILLS = ["session.md", "working-on-a-task.md", "using-the-knowledge-base.md"]
+
+
+def read_config(root):
+    path = exit0_dir(root) / "config.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def raw_content_url(config, path):
+    """URL for a file in the course content repo."""
+    base = config.get("_rawContentBase", "").rstrip("/")
+    if base:
+        return f"{base}/{path}"
+    repo = config.get("courseContentRepo", "")
+    return f"https://raw.githubusercontent.com/{repo}/main/{path}"
+
+
+def raw_framework_url(config, path):
+    """URL for a file in the e0 framework repo."""
+    base = config.get("_rawFrameworkBase", "").rstrip("/")
+    if base:
+        return f"{base}/{path}"
+    return f"https://raw.githubusercontent.com/exit0-io/e0/{E0_VERSION}/cli/{path}"
+
+
+def fetch_text(url):
+    """Fetch a URL and return its text body, or None on any error."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            return resp.read().decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # ---------------------------------------------------------------- state
@@ -166,7 +208,7 @@ def write_profile(root, profile):
 
 
 def read_catalog(root):
-    path = content_dir(root) / "catalog.json"
+    path = exit0_dir(root) / "catalog.json"
     if not path.exists():
         return None
     try:
@@ -360,148 +402,41 @@ def select_branch(branches, facts):
 
 
 def verify_document(canonical_text, personalized_text):
-    """Check a personalized document against its canonical form.
+    """Check that all fixed regions from canonical are intact in the clean personalized doc.
 
-    Returns {"violations": [...], "restored": str}. The restored document keeps every
-    legal personalization and reverts everything else.
+    The personalized doc is clean Markdown with no markers. Returns {"violations": [...]}.
     """
-    canonical = parse_regions(canonical_text)
-
     try:
-        personalized = parse_regions(personalized_text)
+        regions = parse_regions(canonical_text)
     except MarkerError as exc:
         return {
             "violations": [
                 {
                     "kind": "structure",
-                    "message": f"This document's markers have a problem: {exc}",
+                    "message": f"The original document has markers with a problem: {exc}",
                 }
-            ],
-            "restored": canonical_text,
-        }
-
-    shapes_match = len(canonical) == len(personalized) and all(
-        left["kind"] == right["kind"] for left, right in zip(canonical, personalized)
-    )
-    if not shapes_match:
-        return {
-            "violations": [
-                {
-                    "kind": "structure",
-                    "message": "Some parts of the document were added, removed, or moved. "
-                    "e0 put the original text back.",
-                }
-            ],
-            "restored": canonical_text,
+            ]
         }
 
     violations = []
-    rebuilt = []
-
-    for original, edited in zip(canonical, personalized):
-        if original["kind"] == "fixed":
-            if original["raw"] != edited["raw"]:
+    for region in regions:
+        if region["kind"] == "fixed" and region["text"].strip():
+            if region["text"] not in personalized_text:
                 violations.append(
                     {
                         "kind": "fixed",
-                        "message": "You changed text you were not supposed to change. "
-                        "e0 put it back.",
+                        "message": "Protected text was changed or removed. "
+                                   "Re-personalize from the canonical in data.canonical.",
                     }
                 )
-                rebuilt.append(original["raw"])
-            else:
-                rebuilt.append(edited["raw"])
-
-        elif original["kind"] == "variant":
-            chosen = edited["text"].strip()
-            allowed = [branch["text"].strip() for branch in original["branches"]]
-            if chosen in allowed or chosen == original["text"].strip():
-                rebuilt.append(edited["raw"])
-            else:
-                violations.append(
-                    {
-                        "kind": "variant",
-                        "id": original["id"],
-                        "message": f"Your choice for '{original['id']}' is not one of the options you were given. "
-                        "e0 put the original text back.",
-                    }
-                )
-                rebuilt.append(original["raw"])
-
-        else:  # retone — free text by design
-            rebuilt.append(edited["raw"])
-
-    return {"violations": violations, "restored": "".join(rebuilt)}
+    return {"violations": violations}
 
 
 # ---------------------------------------------------------------- tasks
 
 
-def task_dir(root, task_id):
-    return exit0_dir(root) / "tasks" / task_id.lower()
-
-
-def content_task_dir(root, task_id):
-    return content_dir(root) / "tasks" / task_id.lower()
-
-
 def sha256_file(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
-
-
-def read_task_rules(root, task_id):
-    """Course-wide rules plus this task's rules, decoded if base64."""
-    parts = []
-    for candidate in (
-        content_dir(root) / "rules.md",
-        content_task_dir(root, task_id) / "rules.md",
-    ):
-        if not candidate.exists():
-            continue
-        raw = candidate.read_text(encoding="utf-8")
-        parts.append(_maybe_decode(raw))
-    return "\n\n".join(part.strip() for part in parts if part.strip())
-
-
-def _maybe_decode(raw):
-    """Decode base64-obfuscated rules; return the text unchanged if it is plain."""
-    stripped = "".join(raw.split())
-    if not stripped or not re.fullmatch(r"[A-Za-z0-9+/=]+", stripped):
-        return raw
-    try:
-        return base64.b64decode(stripped, validate=True).decode("utf-8")
-    except Exception:  # noqa: BLE001
-        return raw
-
-
-def copy_checks(root, task_id):
-    """Copy check files into the working copy and verify their hashes."""
-    import shutil
-
-    source = content_task_dir(root, task_id) / "checks"
-    destination = task_dir(root, task_id) / "checks"
-    result = {"copied": [], "mismatched": []}
-    if not source.exists():
-        return result
-
-    destination.mkdir(parents=True, exist_ok=True)
-    spec_path = source / "checks.json"
-    expected = {}
-    if spec_path.exists():
-        try:
-            expected = json.loads(spec_path.read_text(encoding="utf-8")).get("files", {})
-        except ValueError:
-            expected = {}
-
-    for item in sorted(source.iterdir()):
-        if not item.is_file():
-            continue
-        shutil.copy2(item, destination / item.name)
-        result["copied"].append(item.name)
-        if item.name in expected and sha256_file(item) != expected[item.name]:
-            result["mismatched"].append(item.name)
-
-    return result
 
 
 def personalization_payload(canonical_text, profile):
@@ -524,7 +459,7 @@ def personalization_payload(canonical_text, profile):
 
 
 def read_checks_spec(root, task_id):
-    path = task_dir(root, task_id) / "checks" / "checks.json"
+    path = school_checks_dir(root, task_id) / "checks.json"
     if not path.exists():
         return None
     try:
@@ -538,7 +473,7 @@ def check_hashes(root, task_id):
     spec = read_checks_spec(root, task_id)
     if not spec:
         return []
-    checks = task_dir(root, task_id) / "checks"
+    checks = school_checks_dir(root, task_id)
     drifted = []
     for name, expected in spec.get("files", {}).items():
         candidate = checks / name
@@ -553,7 +488,7 @@ def run_checks(root, task_id):
     if not spec or not spec.get("run"):
         return False, "This task has no runnable checks."
 
-    checks = task_dir(root, task_id) / "checks"
+    checks = school_checks_dir(root, task_id)
     command = [
         part.replace("{checks_dir}", str(checks)) for part in spec["run"]
     ]
@@ -616,19 +551,52 @@ def cmd_init(args):
     if failure:
         return failure
 
-    if not (content_dir(root) / "catalog.json").exists():
+    config = read_config(root)
+    if not config.get("courseContentRepo"):
         return problem(
             "init",
-            "The course content is not set up yet.",
-            "Run: git submodule update --init --recursive",
+            "e0 cannot find the course content repo.",
+            "Check that .exit0/config.json exists and has a 'courseContentRepo' key.",
         )
+
+    catalog_text = fetch_text(raw_content_url(config, "catalog.json"))
+    if catalog_text is None:
+        return problem(
+            "init",
+            "e0 could not download the course catalog.",
+            "Check your internet connection and the 'courseContentRepo' in .exit0/config.json.",
+        )
+
+    try:
+        catalog = json.loads(catalog_text)
+    except ValueError:
+        return problem(
+            "init",
+            "The course catalog is not valid JSON.",
+            "This is a problem with the course itself. Please report it.",
+        )
+
+    (exit0_dir(root) / "catalog.json").write_text(catalog_text, encoding="utf-8")
+
+    skills_dir = exit0_dir(root) / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    for name in FRAMEWORK_SKILLS:
+        text = fetch_text(raw_framework_url(config, f"skills/{name}"))
+        if text is not None:
+            (skills_dir / name).write_text(text, encoding="utf-8")
+
+    for name in catalog.get("skills", []):
+        text = fetch_text(raw_content_url(config, f"skills/{name}"))
+        if text is not None:
+            (skills_dir / name).write_text(text, encoding="utf-8")
 
     profile = read_profile(root) or detect_profile(root)
     write_profile(root, profile)
 
-    catalog = read_catalog(root)
-    course = catalog.get("course", {}) if catalog else {}
-    (exit0_dir(root) / "tasks").mkdir(parents=True, exist_ok=True)
+    (pathlib.Path(root) / "content").mkdir(exist_ok=True)
+    (pathlib.Path(root) / "tests" / "school-checks").mkdir(parents=True, exist_ok=True)
+
+    course = catalog.get("course", {})
     append_event(root, "initialized", course=course.get("id"))
 
     return ok(
@@ -636,10 +604,10 @@ def cmd_init(args):
         {
             "course": course,
             "profile": profile,
-            "taskCount": len(catalog.get("tasks", [])) if catalog else 0,
+            "taskCount": len(catalog.get("tasks", [])),
         },
         f"Ready. {course.get('title', 'The course')} has "
-        f"{len(catalog.get('tasks', [])) if catalog else 0} tasks.",
+        f"{len(catalog.get('tasks', []))} tasks.",
     )
 
 
@@ -725,6 +693,39 @@ def cmd_status(args):
     )
 
 
+def download_checks(root, task_id, config):
+    """Fetch checks.json and all listed check files into tests/school-checks/{id}/."""
+    dest = school_checks_dir(root, task_id)
+    result = {"copied": [], "mismatched": []}
+
+    checks_text = fetch_text(
+        raw_content_url(config, f"tasks/{task_id.lower()}/checks/checks.json")
+    )
+    if checks_text is None:
+        return result
+
+    try:
+        spec = json.loads(checks_text)
+    except ValueError:
+        return result
+
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "checks.json").write_text(checks_text, encoding="utf-8")
+    result["copied"].append("checks.json")
+
+    for name in spec.get("files", {}):
+        file_text = fetch_text(
+            raw_content_url(config, f"tasks/{task_id.lower()}/checks/{name}")
+        )
+        if file_text is not None:
+            (dest / name).write_text(file_text, encoding="utf-8")
+            result["copied"].append(name)
+            if sha256_file(dest / name) != spec["files"][name]:
+                result["mismatched"].append(name)
+
+    return result
+
+
 def cmd_start(args):
     root, failure = require_repo("start")
     if failure:
@@ -752,24 +753,17 @@ def cmd_start(args):
         )
 
     task_id = task["id"]
-    source = content_task_dir(root, task_id) / "task.md"
-    if not source.exists():
+    config = read_config(root)
+
+    canonical_text = fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/task.md"))
+    if canonical_text is None:
         return problem(
             "start",
-            f"Task {task_id} does not have a task.md file in the course.",
-            "This is a problem with the course itself, not with what you did. Please report it.",
+            f"e0 could not download task {task_id}.",
+            "Check your internet connection.",
         )
 
-    canonical_text = source.read_text(encoding="utf-8")
-    working = task_dir(root, task_id)
-    working.mkdir(parents=True, exist_ok=True)
-    (working / "task.canonical.md").write_text(canonical_text, encoding="utf-8")
-
-    already_started = (working / "task.md").exists()
-    if not already_started:
-        (working / "task.md").write_text(canonical_text, encoding="utf-8")
-
-    checks = copy_checks(root, task_id)
+    checks = download_checks(root, task_id, config)
 
     statuses = task_status(root)
     unmet = unmet_dependencies(task, statuses)
@@ -815,7 +809,7 @@ def cmd_start(args):
     body = (
         f"{task.get('description', '')}\n\n"
         f"Working through **{task['title']}**.\n\n"
-        f"Task text: `.exit0/tasks/{task_id.lower()}/task.md`"
+        f"Write the personalized task to: `content/{task_id.lower()}/task.md`"
     ).strip()
 
     return ok(
@@ -823,20 +817,20 @@ def cmd_start(args):
         {
             "taskId": task_id,
             "title": task["title"],
-            "alreadyStarted": already_started,
+            "canonical": canonical_text,
             "paths": {
-                "task": f".exit0/tasks/{task_id.lower()}/task.md",
-                "canonical": f".exit0/tasks/{task_id.lower()}/task.canonical.md",
-                "checks": f".exit0/tasks/{task_id.lower()}/checks",
+                "task": f"content/{task_id.lower()}/task.md",
+                "checks": f"tests/school-checks/{task_id.lower()}",
             },
             "relatedTopics": task.get("relatedTopics", []),
             "warnings": warnings,
             "personalization": payload,
             "markerProblem": marker_problem,
-            "rules": read_task_rules(root, task_id),
             "issue": {"title": f"[{task_id}] {task['title']}", "body": body},
         },
-        f"{task_id} is ready at .exit0/tasks/{task_id.lower()}/task.md.",
+        f"Canonical text for {task_id} is in data.canonical. "
+        f"Personalize it and write to content/{task_id.lower()}/task.md, "
+        f"then run e0 verify {task_id}.",
     )
 
 
@@ -848,61 +842,59 @@ def cmd_verify(args):
     if not args:
         return problem(
             "verify",
-            "e0 verify needs a task id or a file path.",
-            "Use: e0 verify <taskId>  or  e0 verify <path/to/task.md>",
+            "e0 verify needs a task id.",
+            "Use: e0 verify <taskId>",
         )
 
-    target = args[0]
-    candidate = task_dir(root, target) / "task.md"
-    if candidate.exists():
-        personalized_path = candidate
-        canonical_path = task_dir(root, target) / "task.canonical.md"
-    else:
-        personalized_path = pathlib.Path(root) / target
-        canonical_path = personalized_path.with_name(
-            personalized_path.stem + ".canonical" + personalized_path.suffix
-        )
+    catalog, failure = require_content("verify", root)
+    if failure:
+        return failure
 
-    if not personalized_path.exists() or not canonical_path.exists():
+    task = find_task(catalog, args[0])
+    if task is None:
         return problem(
             "verify",
-            f"e0 cannot find both the document and its original copy for '{target}'.",
-            "Run 'e0 start <taskId>' first. That command writes both files.",
+            f"There is no task called '{args[0]}'.",
+            "Run 'e0 catalog' to see the task ids.",
         )
 
-    try:
-        result = verify_document(
-            canonical_path.read_text(encoding="utf-8"),
-            personalized_path.read_text(encoding="utf-8"),
-        )
-    except MarkerError as exc:
+    task_id = task["id"]
+    config = read_config(root)
+
+    canonical_text = fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/task.md"))
+    if canonical_text is None:
         return problem(
             "verify",
-            f"The original document has markers with a problem: {exc}",
-            "This is a problem with the course itself, not with what you did. Please report it.",
+            f"e0 could not download the canonical task for {task_id}.",
+            "Check your internet connection.",
         )
+
+    personalized_path = task_content_dir(root, task_id) / "task.md"
+    if not personalized_path.exists():
+        return problem(
+            "verify",
+            f"The personalized task for {task_id} does not exist yet.",
+            f"Personalize the canonical text from 'e0 start {task_id}' "
+            f"and write it to content/{task_id.lower()}/task.md.",
+        )
+
+    result = verify_document(canonical_text, personalized_path.read_text(encoding="utf-8"))
 
     if not result["violations"]:
         return ok(
             "verify",
-            {"violations": [], "path": str(personalized_path.relative_to(root))},
+            {"violations": [], "path": f"content/{task_id.lower()}/task.md"},
             "Your personalization follows the rules.",
         )
 
-    personalized_path.write_text(result["restored"], encoding="utf-8")
     append_event(
-        root,
-        "verify_restored",
-        path=str(personalized_path.relative_to(root)),
-        count=len(result["violations"]),
+        root, "verify_failed", taskId=task_id, count=len(result["violations"])
     )
-
     payload = problem(
         "verify",
-        "The personalized document changed content it is not allowed to change. "
-        + " ".join(violation["message"] for violation in result["violations"]),
-        "e0 has put the protected text back. You can only personalize inside "
-        "e0:variant and e0:retone regions.",
+        "The personalized task changed text it is not allowed to change. "
+        + " ".join(v["message"] for v in result["violations"]),
+        f"Re-personalize from the canonical text returned by 'e0 start {task_id}'.",
     )
     payload["data"] = {"violations": result["violations"]}
     return payload
@@ -941,7 +933,7 @@ def cmd_check(args):
             )
         task_id = in_progress[0]
 
-    if not (task_dir(root, task_id) / "checks").exists():
+    if not school_checks_dir(root, task_id).exists():
         return problem(
             "check",
             f"The checks for {task_id} have not been downloaded yet.",
@@ -984,19 +976,49 @@ def cmd_read(args):
     if failure:
         return failure
 
-    topic = args[0] if args else ""
-    index = content_dir(root) / "knowledgebase" / "index.json"
-    location = f".exit0/content/knowledgebase/{topic}/tutorial.md" if topic else None
-
-    return problem(
-        "read",
-        "Personalized tutorial delivery is not built yet.",
-        (
-            f"You can read the tutorial right now at {location}. "
-            if location
-            else ""
+    if not args:
+        catalog, failure = require_content("read", root)
+        if failure:
+            return failure
+        config = read_config(root)
+        index_text = fetch_text(raw_content_url(config, "knowledgebase/index.json"))
+        topics = []
+        if index_text:
+            try:
+                topics = json.loads(index_text).get("topics", [])
+            except ValueError:
+                pass
+        return ok(
+            "read",
+            {"topics": topics},
+            "Use 'e0 read <topic>' to read a knowledge base tutorial.",
         )
-        + f"The list of topics is in {index.relative_to(root) if index.exists() else 'the course content'}.",
+
+    topic = args[0]
+    catalog, failure = require_content("read", root)
+    if failure:
+        return failure
+
+    config = read_config(root)
+    tutorial_text = fetch_text(
+        raw_content_url(config, f"knowledgebase/{topic}/tutorial.md")
+    )
+    if tutorial_text is None:
+        return problem(
+            "read",
+            f"e0 could not download the tutorial for '{topic}'.",
+            "Run 'e0 read' (no topic) to see available topics.",
+        )
+
+    return ok(
+        "read",
+        {
+            "topic": topic,
+            "tutorial": tutorial_text,
+            "suggestedPath": f"content/knowledge-base/{topic}.md",
+        },
+        f"Tutorial for '{topic}' is in data.tutorial. "
+        f"You can write it to content/knowledge-base/{topic}.md if the student wants a local copy.",
     )
 
 
