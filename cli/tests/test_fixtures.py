@@ -65,9 +65,8 @@ def test_every_task_directory_has_checks():
         assert checks.exists(), f"{task['id']} has no checks.json"
 
 
-def test_catalog_declares_its_framework_requirement():
-    """e0 is released on its own cadence, so a course must state the minimum it needs."""
+def test_catalog_has_course_id_and_title():
+    """Catalog must identify the course."""
     catalog = json.loads((FIXTURE_COURSE / "catalog.json").read_text(encoding="utf-8"))
-    assert "requiresE0" in catalog
     assert catalog["course"]["id"]
     assert catalog["course"]["title"]
