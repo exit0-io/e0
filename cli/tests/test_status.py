@@ -51,8 +51,8 @@ def test_bare_e0_runs_status(run_e0, initialized):
     assert payload["command"] == "status"
 
 
-def test_status_before_init_gives_guidance(run_e0, bare_student_repo):
-    payload, code = run_e0(["status"], bare_student_repo)
+def test_status_before_init_gives_guidance(run_e0, student_repo):
+    payload, code = run_e0(["status"], student_repo)
     assert code == 0
     assert payload["ok"] is False
     assert "init" in payload["guidance"]

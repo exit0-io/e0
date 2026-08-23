@@ -1,3 +1,5 @@
+import functools
+import http.server
 import importlib.machinery
 import importlib.util
 import json
@@ -6,13 +8,13 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import threading
 
 import pytest
 
-FIXTURE_COURSE = pathlib.Path(__file__).resolve().parent.parent.parent / "courses" / "demo" / "content"
-FRAMEWORK_SRC = pathlib.Path(__file__).resolve().parents[1]  # cli/
-
-E0_PATH = pathlib.Path(__file__).resolve().parent.parent / "bin" / "e0"
+FIXTURE_COURSE = pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "content"
+FRAMEWORK_SRC = pathlib.Path(__file__).resolve().parents[1]   # cli/
+E0_PATH = FRAMEWORK_SRC / "bin" / "e0"
 
 
 def _load_e0():
@@ -28,7 +30,7 @@ def e0mod():
     return _load_e0()
 
 
-_COVERAGE_CFG = str(pathlib.Path(__file__).resolve().parents[1] / "setup.cfg")
+_COVERAGE_CFG = str(FRAMEWORK_SRC / "setup.cfg")
 
 
 @pytest.fixture
@@ -65,83 +67,89 @@ def _git(cwd, *args):
             "GIT_AUTHOR_EMAIL": "fixture@example.com",
             "GIT_COMMITTER_NAME": "Fixture",
             "GIT_COMMITTER_EMAIL": "fixture@example.com",
-            # allow local file:// transport so submodule add works in tests
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": "protocol.file.allow",
-            "GIT_CONFIG_VALUE_0": "always",
         },
     )
 
 
 @pytest.fixture
-def make_course_repo(tmp_path):
-    """Build a course content repo, optionally mutating its catalog first."""
+def make_course_dir(tmp_path):
+    """Copy the fixture course to a temp dir, optionally mutating catalog.json first."""
     counter = {"n": 0}
 
     def _make(mutate_catalog=None):
         counter["n"] += 1
-        repo = tmp_path / f"course-repo-{counter['n']}"
-        shutil.copytree(FIXTURE_COURSE, repo)
+        dest = tmp_path / f"course-{counter['n']}"
+        shutil.copytree(FIXTURE_COURSE, dest)
         if mutate_catalog is not None:
-            catalog_path = repo / "catalog.json"
-            catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+            p = dest / "catalog.json"
+            catalog = json.loads(p.read_text(encoding="utf-8"))
             mutate_catalog(catalog)
-            catalog_path.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
-        _git(repo, "init", "-q", "-b", "main")
-        _git(repo, "add", "-A")
-        _git(repo, "commit", "-q", "-m", "fixture course")
-        return repo
+            p.write_text(json.dumps(catalog, indent=2), encoding="utf-8")
+        return dest
 
     return _make
 
 
-@pytest.fixture
-def content_repo(make_course_repo):
-    """A git repo holding the fixture course content."""
-    return make_course_repo()
+def _start_file_server(directory):
+    """Start a SimpleHTTPServer on a random free port. Returns (server, base_url)."""
+
+    class QuietHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(directory), **kwargs)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), QuietHandler)
+    port = server.server_address[1]
+    t = threading.Thread(target=server.serve_forever)
+    t.daemon = True
+    t.start()
+    return server, f"http://127.0.0.1:{port}"
 
 
 @pytest.fixture
-def framework_repo(tmp_path):
-    """Minimal framework git repo matching the .exit0/e0/ expected layout."""
-    repo = tmp_path / "framework-repo"
-    (repo / "bin").mkdir(parents=True)
-    shutil.copy2(E0_PATH, repo / "bin" / "e0")
-    skills_src = FRAMEWORK_SRC / "skills"
-    if skills_src.is_dir():
-        shutil.copytree(skills_src, repo / "skills")
-    else:
-        (repo / "skills").mkdir()
-    # state/ is written at runtime; gitignore it so this submodule stays clean
-    (repo / ".gitignore").write_text("state/\n", encoding="utf-8")
-    _git(repo, "init", "-q", "-b", "main")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "fixture framework")
-    return repo
+def content_server(make_course_dir):
+    """HTTP server serving a temp copy of the fixture course. Returns base URL."""
+    course_dir = make_course_dir()
+    server, url = _start_file_server(course_dir)
+    yield url
+    server.shutdown()
 
 
 @pytest.fixture
-def student_repo(tmp_path, framework_repo, content_repo):
-    """A git repo with .exit0/e0 and .exit0/content wired as submodules."""
+def framework_server():
+    """HTTP server serving cli/ so skills are at /skills/<name>.md. Returns base URL."""
+    server, url = _start_file_server(FRAMEWORK_SRC)
+    yield url
+    server.shutdown()
+
+
+@pytest.fixture
+def student_repo(tmp_path, content_server, framework_server):
+    """Git repo with .exit0/config.json wired to local HTTP servers."""
     repo = tmp_path / "student-repo"
     repo.mkdir()
-    (repo / "README.md").write_text("# My course work\n", encoding="utf-8")
-    (repo / ".gitignore").write_text(".exit0/e0/state/\n.exit0/tasks/\n", encoding="utf-8")
-    _git(repo, "init", "-q", "-b", "main")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "initial")
-    _git(repo, "submodule", "add", str(framework_repo), ".exit0/e0")
-    _git(repo, "submodule", "add", str(content_repo), ".exit0/content")
-    _git(repo, "commit", "-q", "-m", "add submodules")
-    return repo
-
-
-@pytest.fixture
-def bare_student_repo(tmp_path):
-    """A git repo with no submodules — simulates a clone without --recurse-submodules."""
-    repo = tmp_path / "bare-student"
-    repo.mkdir()
-    (repo / "README.md").write_text("# My course work\n", encoding="utf-8")
+    (repo / ".exit0").mkdir()
+    (repo / ".exit0" / "config.json").write_text(
+        json.dumps(
+            {
+                "courseContentRepo": "exit0-io/demo-content",
+                "_rawContentBase": content_server,
+                "_rawFrameworkBase": framework_server,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / ".gitignore").write_text(
+        ".exit0/e0\n"
+        ".exit0/catalog.json\n"
+        ".exit0/skills/\n"
+        ".exit0/state/\n"
+        "content/\n"
+        "tests/school-checks/\n",
+        encoding="utf-8",
+    )
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "initial")

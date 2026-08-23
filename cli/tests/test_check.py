@@ -35,7 +35,7 @@ def test_check_reports_test_output(run_e0, started):
 
 
 def test_check_warns_when_a_test_file_has_drifted(run_e0, started):
-    check_file = started / ".exit0" / "tasks" / "t010" / "checks" / "test_greeting.py"
+    check_file = started / "tests" / "school-checks" / "t010" / "test_greeting.py"
     check_file.write_text("# oops I edited this\n", encoding="utf-8")
 
     payload, _ = run_e0(["check", "T010"], started)
@@ -45,7 +45,7 @@ def test_check_warns_when_a_test_file_has_drifted(run_e0, started):
 def test_check_hashes_detects_drift(e0mod, started):
     assert e0mod.check_hashes(started, "T010") == []
 
-    check_file = started / ".exit0" / "tasks" / "t010" / "checks" / "test_greeting.py"
+    check_file = started / "tests" / "school-checks" / "t010" / "test_greeting.py"
     check_file.write_text("# edited\n", encoding="utf-8")
     assert e0mod.check_hashes(started, "T010") == ["test_greeting.py"]
 

@@ -7,25 +7,29 @@ def initialized(run_e0, student_repo):
     return student_repo
 
 
-def test_start_writes_task_and_canonical_copies(run_e0, initialized):
+def test_start_returns_canonical_text_in_envelope(run_e0, initialized):
     payload, code = run_e0(["start", "T010"], initialized)
-
     assert code == 0
     assert payload["ok"] is True
-
-    task_dir = initialized / ".exit0" / "tasks" / "t010"
-    assert (task_dir / "task.md").exists()
-    assert (task_dir / "task.canonical.md").exists()
-    assert (task_dir / "task.md").read_text(encoding="utf-8") == (
-        task_dir / "task.canonical.md"
-    ).read_text(encoding="utf-8")
+    assert isinstance(payload["data"]["canonical"], str)
+    assert len(payload["data"]["canonical"]) > 0
 
 
-def test_start_copies_the_check_files(run_e0, initialized):
+def test_start_downloads_check_files_to_school_checks(run_e0, initialized):
     run_e0(["start", "T010"], initialized)
-    checks = initialized / ".exit0" / "tasks" / "t010" / "checks"
+    checks = initialized / "tests" / "school-checks" / "t010"
     assert (checks / "test_greeting.py").exists()
     assert (checks / "checks.json").exists()
+
+
+def test_start_does_not_write_task_to_exit0(run_e0, initialized):
+    run_e0(["start", "T010"], initialized)
+    assert not (initialized / ".exit0" / "tasks").exists()
+
+
+def test_start_reports_task_path_as_content_dir(run_e0, initialized):
+    payload, _ = run_e0(["start", "T010"], initialized)
+    assert payload["data"]["paths"]["task"] == "content/t010/task.md"
 
 
 def test_start_accepts_a_lowercase_task_id(run_e0, initialized):
@@ -65,19 +69,17 @@ def test_start_emits_only_facts_referenced_by_variants(run_e0, initialized):
     assert set(facts) == {"os"}
 
 
-def test_start_includes_the_decoded_rules(run_e0, initialized):
+def test_start_does_not_include_rules_in_envelope(run_e0, initialized):
     payload, _ = run_e0(["start", "T010"], initialized)
-    assert "function" in payload["data"]["rules"]
+    assert "rules" not in payload["data"]
 
 
 def test_start_warns_about_unmet_dependencies_but_proceeds(run_e0, initialized):
     payload, code = run_e0(["start", "T020"], initialized)
-
     assert code == 0
     assert payload["ok"] is True
     warnings = payload["data"]["warnings"]
     assert any(warning["kind"] == "dependency" for warning in warnings)
-    assert (initialized / ".exit0" / "tasks" / "t020" / "task.md").exists()
 
 
 def test_start_records_an_override_event_for_unmet_dependencies(
@@ -108,26 +110,9 @@ def test_start_without_a_task_id_is_a_problem(run_e0, initialized):
     assert payload["ok"] is False
 
 
-def test_start_does_not_overwrite_an_existing_personalized_task(run_e0, initialized):
-    run_e0(["start", "T010"], initialized)
-    task_file = initialized / ".exit0" / "tasks" / "t010" / "task.md"
-    task_file.write_text("personalized already\n", encoding="utf-8")
-
-    payload, _ = run_e0(["start", "T010"], initialized)
-
-    assert task_file.read_text(encoding="utf-8") == "personalized already\n"
-    assert payload["data"]["alreadyStarted"] is True
-
-
-def test_read_command_gives_guidance_and_index_location(run_e0, initialized):
-    payload, code = run_e0(["read", "intro-to-linux"], initialized)
-    assert code == 0
-    assert payload["ok"] is False
-    assert "intro-to-linux" in payload["message"]
-
-
 def test_profile_get_on_fresh_repo_detects_os(run_e0, student_repo):
     payload, code = run_e0(["profile", "get"], student_repo)
     assert code == 0
     assert payload["ok"] is True
     assert "os" in payload["data"]["profile"]
+
