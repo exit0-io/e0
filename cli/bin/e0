@@ -100,8 +100,7 @@ def require_repo(command):
     return root, None
 
 
-FRAMEWORK_SKILLS = ["session.md", "working-on-a-task.md", "using-the-knowledge-base.md"]
-
+FRAMEWORK_SKILLS = ["session.md", "working-on-a-task.md", "using-the-knowledge-base.md"]  # kept for reference; not downloaded
 
 def read_config(root):
     path = exit0_dir(root) / "config.json"
@@ -578,18 +577,6 @@ def cmd_init(args):
 
     (exit0_dir(root) / "catalog.json").write_text(catalog_text, encoding="utf-8")
 
-    skills_dir = exit0_dir(root) / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    for name in FRAMEWORK_SKILLS:
-        text = fetch_text(raw_framework_url(config, f"skills/{name}"))
-        if text is not None:
-            (skills_dir / name).write_text(text, encoding="utf-8")
-
-    for name in catalog.get("skills", []):
-        text = fetch_text(raw_content_url(config, f"skills/{name}"))
-        if text is not None:
-            (skills_dir / name).write_text(text, encoding="utf-8")
-
     profile = read_profile(root) or detect_profile(root)
     write_profile(root, profile)
 
@@ -688,6 +675,21 @@ def cmd_status(args):
             "completed": sorted(completed),
             "contentTag": pinned,
             "update": update,
+            "workflow": (
+                "Run `e0 status` at the start of every session. "
+                "If the course is not set up, run `e0 init` first. "
+                "Suggest the cheapest available model once — the course supplies all content and tests. "
+                "Tasks: `e0 start <id>` returns the canonical task text in data.canonical — "
+                "personalize it (select variant branches, fill retone blocks), "
+                "strip all markers, write clean Markdown to content/<id>/task.md, "
+                "run `e0 verify <id>`. Work on a feature branch until `e0 check` passes, "
+                "then open a PR as a GitHub issue titled [<id>] <title>. "
+                "Knowledge base: `e0 read <topic>`. "
+                "Never change text outside e0:variant and e0:retone markers. "
+                "Never edit .exit0/ by hand. "
+                "Never start a task without being asked. "
+                "Brief, respectful tone."
+            ),
         },
         message,
     )
@@ -1046,10 +1048,13 @@ COMMANDS = {
 
 DEFAULT_COMMAND = "status"
 
+_HELP_ALIASES = {"--help", "-h", "-help", "help", "h", "?", "--version", "-v", "version"}
+
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    command = argv[0] if argv else DEFAULT_COMMAND
+    raw = argv[0] if argv else DEFAULT_COMMAND
+    command = "help" if raw in _HELP_ALIASES else raw
     rest = argv[1:]
 
     try:

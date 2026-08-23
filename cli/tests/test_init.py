@@ -13,18 +13,6 @@ def test_init_reports_course_title_and_task_count(run_e0, student_repo):
     assert payload["data"]["taskCount"] == 2
 
 
-def test_init_installs_framework_skills(run_e0, student_repo):
-    run_e0(["init"], student_repo)
-    skills = student_repo / ".exit0" / "skills"
-    assert (skills / "session.md").exists()
-    assert (skills / "working-on-a-task.md").exists()
-
-
-def test_init_installs_course_skills(run_e0, student_repo):
-    run_e0(["init"], student_repo)
-    assert (student_repo / ".exit0" / "skills" / "demo-course-notes.md").exists()
-
-
 def test_init_creates_content_and_school_checks_dirs(run_e0, student_repo):
     run_e0(["init"], student_repo)
     assert (student_repo / "content").is_dir()

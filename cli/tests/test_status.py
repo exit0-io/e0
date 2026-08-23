@@ -45,6 +45,13 @@ def test_status_always_reports_update_as_unknown(run_e0, initialized):
     assert payload["data"]["update"] == "unknown"
 
 
+def test_status_includes_workflow_guidance(run_e0, initialized):
+    payload, _ = run_e0(["status"], initialized)
+    assert "workflow" in payload["data"]
+    assert "e0 start" in payload["data"]["workflow"]
+    assert "e0 verify" in payload["data"]["workflow"]
+
+
 def test_bare_e0_runs_status(run_e0, initialized):
     payload, code = run_e0([], initialized)
     assert code == 0
