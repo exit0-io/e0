@@ -677,18 +677,15 @@ def cmd_status(args):
             "update": update,
             "workflow": (
                 "Run `e0 status` at the start of every session. "
-                "If the course is not set up, run `e0 init` first. "
-                "Suggest the cheapest available model once — the course supplies all content and tests. "
                 "Tasks: `e0 start <id>` returns the canonical task text in data.canonical — "
                 "personalize it (select variant branches, fill retone blocks), "
                 "strip all markers, write clean Markdown to content/<id>/task.md, "
                 "run `e0 verify <id>`. Work on a feature branch until `e0 check` passes, "
-                "then open a PR as a GitHub issue titled [<id>] <title>. "
+                "then open a GitHub issue titled [<id>] <title>. "
                 "Knowledge base: `e0 read <topic>`. "
                 "Never change text outside e0:variant and e0:retone markers. "
-                "Never edit .exit0/ by hand. "
                 "Never start a task without being asked. "
-                "Brief, respectful tone."
+                "Never perform git operations for the student. "
             ),
         },
         message,

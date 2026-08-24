@@ -5,7 +5,7 @@ TEMPLATE = pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "t
 
 
 def test_template_has_required_files():
-    for name in ("README.md", "AGENTS.md", "CLAUDE.md", ".exit0/config.json", ".gitignore"):
+    for name in ("README.md", "AGENTS.md", "CLAUDE.md", ".exit0/config.json", ".exit0/README.md", ".gitignore"):
         assert (TEMPLATE / name).exists(), f"missing {name}"
 
 
@@ -36,11 +36,17 @@ def test_gitignore_covers_generated_dirs():
         assert entry in text, f".gitignore missing: {entry}"
 
 
+def test_exit0_readme_has_curl_bootstrap():
+    readme = (TEMPLATE / ".exit0" / "README.md").read_text(encoding="utf-8")
+    assert "curl" in readme
+    assert "RELEASE" in readme
+    assert ".exit0/e0 init" in readme
+
+
 def test_agents_md_has_curl_bootstrap():
+    # AGENTS.md points to .exit0/README.md; the curl command lives there
     agents = (TEMPLATE / "AGENTS.md").read_text(encoding="utf-8")
-    assert "curl" in agents
-    assert "RELEASE" in agents
-    assert ".exit0/e0 init" in agents
+    assert ".exit0/README.md" in agents
 
 
 def test_agents_md_tells_agent_to_use_e0_status():
