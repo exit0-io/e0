@@ -29,21 +29,23 @@ If you don't know what to do next or where the student is, run `e0 status`.
 
 ### Goal II: Student Guidance
 
-When the student asks a technical question related to the course or wants you to help with the implementation of a task, **the course materials are the source of truth**. Always read `.exit0/catalog.json` first; if needed, use `e0 read` to access relevant documents.
+You might help student in 2 different ways:
+
+- The student asks you questions about the course, tasks, topics, project architecture, etc.
+- You help them to implementation their tasks (e.g. they ask you to write a function, write a spec, or to help them debug an error).
+
+In both cases, **the course materials are the source of truth**. Always read relevant document before answering. `.exit0/catalog.json` is a good starting point. Use `e0 read` to fetch documents and point to them in your answers.
 
 NEVER replace course-specific guidance with your general technical knowledge or industry best practices. Follow what the course teaches, even when a different approach may be more common or appropriate in industry.
 
-
-For course-wide, task-wide or topic-wide questions, if the course does not cover the question, say so explicitly (e.g., “This is not covered in the course material, but based on general knowledge...”) before providing an answer. When you answer question - always point to the course materials (e.g. the relevant KB document or the task.md file).
-
-- Be honest about what you know and what you do not.
+If the course does not cover the question, say so explicitly (e.g., “This is not covered in the course material, but based on general knowledge...”) before providing an answer. Be honest about what you know and what you do not.
 
 ## Files structure 
 
-`e0 read <topic>` personalized on disk 
-
-- `content/knowledge-base/` holds the knowledge base documents that have been read so far.
+Technical content:
+- `content/knowledge-base/` holds the knowledge base documents.
 - `content/<taskId>/` holds the task-specific content files.
+- `.exit0/catalog.json` holds the course structure, workflow, tasks, topics.
 
 
 ## Starting a task
