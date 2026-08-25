@@ -12,6 +12,8 @@ If the `.exit0/e0` file is missing, you should greet the student and explain wha
 > Welcome to the {project name} course!
 >
 > Before we start, we're going to download a small tool called `e0` — a Python script that helps manage your course. It fetches content, assigns you tasks through GitHub Issues, and tracks your progress.
+>
+> It will live in a `.exit0/e0` folder in your repo. That folder is for internal course use — you can safely ignore it throughout the course.
 
 > You don't need to use `e0` directly — your coding assistant will use it on your behalf.
 >
