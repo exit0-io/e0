@@ -100,7 +100,7 @@ def require_repo(command):
     return root, None
 
 
-FRAMEWORK_SKILLS = ["session.md", "working-on-a-task.md", "using-the-knowledge-base.md"]  # kept for reference; not downloaded
+FRAMEWORK_SKILLS = ["learning", "setup-and-update"]
 
 def read_config(root):
     path = exit0_dir(root) / "config.json"
@@ -457,6 +457,29 @@ def personalization_payload(canonical_text, profile):
     return {"variants": variants, "retoneBlocks": retone_blocks, "facts": facts}
 
 
+def download_skills(root, config, catalog):
+    """Fetch framework and course skills into .exit0/skills/. Returns list of downloaded names."""
+    skills_dir = exit0_dir(root) / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    downloaded = []
+
+    for name in FRAMEWORK_SKILLS:
+        text = fetch_text(raw_framework_url(config, f"skills/{name}/SKILL.md"))
+        if text is not None:
+            dest = skills_dir / name
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "SKILL.md").write_text(text, encoding="utf-8")
+            downloaded.append(name)
+
+    for name in catalog.get("skills", []):
+        text = fetch_text(raw_content_url(config, f"skills/{name}"))
+        if text is not None:
+            (skills_dir / name).write_text(text, encoding="utf-8")
+            downloaded.append(name)
+
+    return downloaded
+
+
 def read_checks_spec(root, task_id):
     path = school_checks_dir(root, task_id) / "checks.json"
     if not path.exists():
@@ -583,6 +606,8 @@ def cmd_init(args):
     (pathlib.Path(root) / "content").mkdir(exist_ok=True)
     (pathlib.Path(root) / "tests" / "school-checks").mkdir(parents=True, exist_ok=True)
 
+    skills = download_skills(root, config, catalog)
+
     course = catalog.get("course", {})
     append_event(root, "initialized", course=course.get("id"))
 
@@ -592,6 +617,7 @@ def cmd_init(args):
             "course": course,
             "profile": profile,
             "taskCount": len(catalog.get("tasks", [])),
+            "skills": skills,
         },
         f"Ready. {course.get('title', 'The course')} has "
         f"{len(catalog.get('tasks', []))} tasks.",

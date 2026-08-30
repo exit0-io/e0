@@ -24,6 +24,12 @@ learning process.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` — design and implementation
   history; read them before changing behavior they describe
 
+## Running tests
+
+```bash
+cd cli && ../.venv/bin/python -m pytest -v
+```
+
 ## Rules
 
 - Never perform git commands yourself. Ask me.
