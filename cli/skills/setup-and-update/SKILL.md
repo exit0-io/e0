@@ -1,6 +1,6 @@
 ---
 name: setup-and-update
-description: Use when e0 is not installed (first session in this repo), or when asked to update, or when e0 status reports that the current version should be updated.
+description: Use when e0 is not installed, or when asked to update, or when e0 status reports that the current version should be updated.
 ---
 
 # Setup and Update
@@ -22,7 +22,7 @@ If the `.exit0/e0` file is missing, you should greet the student and explain wha
 Then run:
 
 ```bash
-RELEASE=v1.0
+RELEASE=v1.1
 curl -fsSL "https://raw.githubusercontent.com/exit0-io/e0/${RELEASE}/cli/bin/e0" -o .exit0/e0 && chmod +x .exit0/e0
 .exit0/e0 init
 ```
