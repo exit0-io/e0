@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 # Must match the git tag exactly — skills are fetched from this ref.
-E0_VERSION = "v1.1"
+E0_VERSION = "v1.2"
 
 # ---------------------------------------------------------------- envelope
 
