@@ -41,3 +41,11 @@ def test_learning_skill_requires_verify_after_start():
 def test_setup_skill_mentions_the_cheap_model():
     text = (SKILLS / "setup-and-update" / "SKILL.md").read_text(encoding="utf-8").lower()
     assert "cheap" in text or "cheapest" in text
+
+
+def test_the_pinned_version_matches_the_release_the_setup_skill_downloads():
+    """Both name the same git tag: e0 fetches its skills from the ref it was released as."""
+    setup = (SKILLS / "setup-and-update" / "SKILL.md").read_text(encoding="utf-8")
+    release = re.search(r"^RELEASE=(\S+)", setup, re.MULTILINE).group(1)
+    version = re.search(r'^E0_VERSION = "(\S+)"', E0_PATH.read_text(encoding="utf-8"), re.MULTILINE).group(1)
+    assert version == release
