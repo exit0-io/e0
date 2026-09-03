@@ -22,7 +22,7 @@ If the `.exit0/e0` file is missing, you should greet the student and explain wha
 Then run:
 
 ```bash
-RELEASE=v1.1
+RELEASE=v1.2
 curl -fsSL "https://raw.githubusercontent.com/exit0-io/e0/${RELEASE}/cli/bin/e0" -o .exit0/e0 && chmod +x .exit0/e0
 .exit0/e0 init
 ```
