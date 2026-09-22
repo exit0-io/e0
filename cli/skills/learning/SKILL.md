@@ -13,7 +13,7 @@ Before your first reply, even to "hi":
 
 1. If `.exit0/e0` is missing, follow [First-time setup](references/setup-and-update.md#first-time-setup).
 2. Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`).
-3. Reply. Orient in a few lines: what is in progress (link the issue URL), what is ready to start, what comes next. Offer to tell more about a task or to start one, then wait for them to ask.
+3. Reply. Orient in a few lines: what is in progress (link the issue URL), what is ready to start, what comes next (mention by task ID; don't link to non-existent issues). Offer to tell more about a task or to start one, then wait for them to ask.
 
 One message per turn, sent when the commands are done. It says what the result means for the student. The commands you ran, the files you wrote, and the steps in between stay out of it.
 
@@ -71,6 +71,14 @@ When the student asks to start: `e0 start <id>`. It verifies the file and return
 > git pull
 > git checkout -b <task-branch>
 > ```
+>
+> **If this is your first task**, add this context before the commands:
+> 
+> Engineering teams use a tool called **Git** to work on the same codebase together without stepping on each other's toes. Think about it—if two people edit the same file at the same time, they can overwrite each other's work. Git solves this by letting each developer work on their own "branch" of the codebase. When you work on a branch, your changes are separate and safe. When you're ready, you create a pull request to bring your changes back to the main codebase. This way, multiple developers can work on the same project without interfering with each other.
+> 
+> Don't worry if you don't understand all of this yet—we'll go through it together. For now, just run these commands:
+>
+> **For other tasks**, use this simpler line:
 > {one line on why: main stays clean, the work goes in a branch and comes back as a pull request}
 
 `e0 verify <id>` runs the file check on its own.
