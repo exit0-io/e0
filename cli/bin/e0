@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""e0 — the Exit Zero CLI.
+"""e0 — the Exit0 CLI.
 
-Holds everything deterministic in a course workflow: which task is next, what its rules are,
-whether the student's work passes. The agent asks; it does not guess.
+Holds everything deterministic in a course workflow: which tasks are ready, what their rules
+are, whether the student's work passes. The agent asks; it does not guess.
 
 Single file, standard library only, no install step. Never crashes: every invocation
 exits 0 and prints exactly one JSON object to stdout, so a failure is something the
 agent can read aloud rather than a dead end.
+
+Envelope: a successful reply is `{"command", "data", "message"}`. A failure is
+`{"command", "problem", "guidance", "message"}`. The presence of `problem` is the signal.
 """
 
-import datetime
 import hashlib
 import json
 import pathlib
@@ -19,14 +21,14 @@ import subprocess
 import sys
 
 # Must match the git tag exactly — skills are fetched from this ref.
-E0_VERSION = "v1.2"
+E0_VERSION = "v1.3"
 
 # ---------------------------------------------------------------- envelope
 
 
-def ok(command, data=None, message=""):
+def reply(command, data=None, message=""):
+    """A successful reply. It has `data` and no `problem` key."""
     return {
-        "ok": True,
         "command": command,
         "data": data if data is not None else {},
         "message": message,
@@ -34,8 +36,8 @@ def ok(command, data=None, message=""):
 
 
 def problem(command, problem, guidance, message=None):
+    """A failed reply. The `problem` key is what tells it apart from a success."""
     return {
-        "ok": False,
         "command": command,
         "problem": problem,
         "guidance": guidance,
@@ -101,7 +103,10 @@ def require_repo(command):
     return root, None
 
 
-FRAMEWORK_SKILLS = ["learning", "setup-and-update"]
+# Framework skills and the files each one is made of, relative to cli/skills/<name>/.
+FRAMEWORK_SKILLS = {
+    "learning": ["SKILL.md", "references/setup-and-update.md"],
+}
 
 def read_config(root):
     path = exit0_dir(root) / "config.json"
@@ -122,12 +127,21 @@ def raw_content_url(config, path):
     return f"https://raw.githubusercontent.com/{repo}/main/{path}"
 
 
-def raw_framework_url(config, path):
-    """URL for a file in the e0 framework repo."""
+def raw_framework_url(config, path, ref=None):
+    """URL for a file in the e0 framework repo, at this release unless `ref` says otherwise."""
     base = config.get("_rawFrameworkBase", "").rstrip("/")
     if base:
         return f"{base}/{path}"
-    return f"https://raw.githubusercontent.com/exit0-io/e0/{E0_VERSION}/cli/{path}"
+    return f"https://raw.githubusercontent.com/exit0-io/e0/{ref or E0_VERSION}/cli/{path}"
+
+
+def fetch_framework_text(config, path):
+    """Fetch a framework file at this release. If the release tag is not published yet
+    (an e0 taken from a branch), fall back to main so the skills still arrive."""
+    text = fetch_text(raw_framework_url(config, path))
+    if text is None and not config.get("_rawFrameworkBase"):
+        text = fetch_text(raw_framework_url(config, path, ref="main"))
+    return text
 
 
 def fetch_text(url):
@@ -141,36 +155,87 @@ def fetch_text(url):
 
 
 # ---------------------------------------------------------------- state
+#
+# e0 keeps almost nothing locally. The student's progress lives in the GitHub issues of their
+# own repo: an open issue titled "[T010] ..." means T010 is in progress, a closed one means it
+# is complete. The only local state is profile.json (facts about this machine).
 
 
-def _now():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def run_gh(cwd, *args):
+    """Run a GitHub CLI command. Returns (returncode, stdout, stderr) and never raises."""
+    try:
+        proc = subprocess.run(
+            ["gh", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 127, "", str(exc)
 
 
-def append_event(root, event, **fields):
-    record = {"ts": _now(), "event": event}
-    record.update(fields)
-    directory = state_dir(root)
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / "events.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
-    return record
+ISSUE_TASK_ID = re.compile(r"^\s*\[([^\]]+)\]")
 
 
-def read_events(root):
-    path = state_dir(root) / "events.jsonl"
-    if not path.exists():
-        return []
-    events = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+def github_progress(root, catalog):
+    """Read the student's progress from the GitHub issues of this repo.
+
+    Returns (progress, None) or (None, error_text). `progress` maps a task id to
+    {"state": "in_progress" | "complete", "issue": {"number", "url", "state"}}.
+    An open issue wins over a closed one for the same task.
+    """
+    code, out, err = run_gh(
+        root, "issue", "list", "--state", "all", "--limit", "1000",
+        "--json", "number,title,state,url",
+    )
+    if code != 0:
+        return None, err or out or "the gh command failed"
+    try:
+        issues = json.loads(out or "[]")
+    except ValueError:
+        return None, "gh returned something that is not JSON"
+
+    progress = {}
+    for issue in issues:
+        match = ISSUE_TASK_ID.match(issue.get("title", ""))
+        if not match:
             continue
-        try:
-            events.append(json.loads(line))
-        except ValueError:
-            continue  # a corrupted line must never stop the course
-    return events
+        task = find_task(catalog, match.group(1))
+        if task is None:
+            continue
+        state = "in_progress" if issue.get("state", "").upper() == "OPEN" else "complete"
+        current = progress.get(task["id"])
+        if current and current["state"] == "in_progress":
+            continue
+        progress[task["id"]] = {
+            "state": state,
+            "issue": {
+                "number": issue.get("number"),
+                "url": issue.get("url"),
+                "state": issue.get("state"),
+            },
+        }
+    return progress, None
+
+
+def statuses_from(progress):
+    return {task_id: entry["state"] for task_id, entry in progress.items()}
+
+
+def require_progress(command, root, catalog):
+    """Return (progress, None) or (None, problem_payload)."""
+    progress, error = github_progress(root, catalog)
+    if progress is None:
+        return None, problem(
+            command,
+            "e0 reads your progress from the GitHub issues of this repo, and could not. "
+            f"({error})",
+            "Check that the GitHub CLI is installed and logged in ('gh auth status'), "
+            "and that this repo has a GitHub remote ('git remote -v').",
+        )
+    return progress, None
 
 
 def _detect_os():
@@ -227,20 +292,6 @@ def find_task(catalog, task_id):
     return None
 
 
-def task_status(root):
-    """Derive each task's status from the event log. Later events win."""
-    statuses = {}
-    for event in read_events(root):
-        task_id = event.get("taskId")
-        if not task_id:
-            continue
-        if event["event"] == "task_started":
-            statuses[task_id] = "in_progress"
-        elif event["event"] == "task_completed":
-            statuses[task_id] = "complete"
-    return statuses
-
-
 def require_content(command, root):
     """Return (catalog, None) or (None, problem_payload)."""
     catalog = read_catalog(root)
@@ -253,12 +304,30 @@ def require_content(command, root):
     return catalog, None
 
 
-def next_task(catalog, statuses):
-    ordered = sorted(catalog.get("tasks", []), key=lambda item: item.get("order", 0))
-    for task in ordered:
-        if statuses.get(task["id"]) != "complete":
-            return task
-    return None
+def ordered_tasks(catalog):
+    return sorted(catalog.get("tasks", []), key=lambda item: item.get("order", 0))
+
+
+def available_tasks(catalog, statuses):
+    """Tasks the student can start now: not started, not complete, and every task they
+    build on is complete. Tasks form a tree, so this is a list, not a single task."""
+    return [
+        task
+        for task in ordered_tasks(catalog)
+        if statuses.get(task["id"]) is None and not unmet_dependencies(task, statuses)
+    ]
+
+
+def tasks_in_progress(catalog, statuses):
+    return [task for task in ordered_tasks(catalog) if statuses.get(task["id"]) == "in_progress"]
+
+
+def task_summary(task):
+    return {
+        "id": task["id"],
+        "title": task["title"],
+        "description": task.get("description", ""),
+    }
 
 
 def unmet_dependencies(task, statuses):
@@ -401,6 +470,25 @@ def select_branch(branches, facts):
     return None
 
 
+def personalization_payload(canonical_text, profile):
+    """What the agent is permitted to act on — and nothing else."""
+    regions = parse_regions(canonical_text)
+    variants = []
+    retone_blocks = []
+    referenced_keys = set()
+
+    for region in regions:
+        if region["kind"] == "variant":
+            variants.append({"id": region["id"], "branches": region["branches"]})
+            for branch in region["branches"]:
+                referenced_keys.update(branch["when"].keys())
+        elif region["kind"] == "retone":
+            retone_blocks.append({"basedOn": region["basedOn"]})
+
+    facts = {key: profile[key] for key in sorted(referenced_keys) if key in profile}
+    return {"variants": variants, "retoneBlocks": retone_blocks, "facts": facts}
+
+
 def verify_document(canonical_text, personalized_text):
     """Check that all fixed regions from canonical are intact in the clean personalized doc.
 
@@ -426,7 +514,7 @@ def verify_document(canonical_text, personalized_text):
                     {
                         "kind": "fixed",
                         "message": "Protected text was changed or removed. "
-                                   "Re-personalize from the canonical in data.canonical.",
+                                   "Personalize again from data.canonical of 'e0 task <id>'.",
                     }
                 )
     return {"violations": violations}
@@ -439,37 +527,23 @@ def sha256_file(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
-def personalization_payload(canonical_text, profile):
-    """What the agent is permitted to act on — and nothing else."""
-    regions = parse_regions(canonical_text)
-    variants = []
-    retone_blocks = []
-    referenced_keys = set()
-
-    for region in regions:
-        if region["kind"] == "variant":
-            variants.append({"id": region["id"], "branches": region["branches"]})
-            for branch in region["branches"]:
-                referenced_keys.update(branch["when"].keys())
-        elif region["kind"] == "retone":
-            retone_blocks.append({"basedOn": region["basedOn"]})
-
-    facts = {key: profile[key] for key in sorted(referenced_keys) if key in profile}
-    return {"variants": variants, "retoneBlocks": retone_blocks, "facts": facts}
-
-
 def download_skills(root, config, catalog):
     """Fetch framework and course skills into .exit0/skills/. Returns list of downloaded names."""
     skills_dir = exit0_dir(root) / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
     downloaded = []
 
-    for name in FRAMEWORK_SKILLS:
-        text = fetch_text(raw_framework_url(config, f"skills/{name}/SKILL.md"))
-        if text is not None:
-            dest = skills_dir / name
-            dest.mkdir(parents=True, exist_ok=True)
-            (dest / "SKILL.md").write_text(text, encoding="utf-8")
+    for name, files in FRAMEWORK_SKILLS.items():
+        fetched = False
+        for relative in files:
+            text = fetch_framework_text(config, f"skills/{name}/{relative}")
+            if text is None:
+                continue
+            dest = skills_dir / name / relative
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+            fetched = True
+        if fetched:
             downloaded.append(name)
 
     for name in catalog.get("skills", []):
@@ -543,7 +617,7 @@ def cmd_profile(args):
     profile = read_profile(root) or detect_profile(root)
 
     if action == "get":
-        return ok(
+        return reply(
             "profile",
             {"profile": profile},
             "Your profile: " + ", ".join(f"{k}={v}" for k, v in sorted(profile.items())),
@@ -559,8 +633,7 @@ def cmd_profile(args):
         key, value = args[1], args[2]
         profile[key] = value
         write_profile(root, profile)
-        append_event(root, "profile_set", key=key, value=value)
-        return ok("profile", {"profile": profile}, f"Recorded {key}={value}.")
+        return reply("profile", {"profile": profile}, f"Recorded {key}={value}.")
 
     return problem(
         "profile",
@@ -607,18 +680,16 @@ def cmd_init(args):
     (pathlib.Path(root) / "content").mkdir(exist_ok=True)
     (pathlib.Path(root) / "tests" / "school-checks").mkdir(parents=True, exist_ok=True)
 
-    skills = download_skills(root, config, catalog)
+    download_skills(root, config, catalog)
 
     course = catalog.get("course", {})
-    append_event(root, "initialized", course=course.get("id"))
 
-    return ok(
+    return reply(
         "init",
         {
             "course": course,
             "profile": profile,
             "taskCount": len(catalog.get("tasks", [])),
-            "skills": skills,
         },
         f"Ready. {course.get('title', 'The course')} has "
         f"{len(catalog.get('tasks', []))} tasks.",
@@ -634,25 +705,21 @@ def cmd_catalog(args):
     if failure:
         return failure
 
-    statuses = task_status(root)
-    tasks = []
-    for task in sorted(catalog.get("tasks", []), key=lambda item: item.get("order", 0)):
-        tasks.append(
-            {
-                "id": task["id"],
-                "title": task["title"],
-                "description": task.get("description", ""),
-                "labels": task.get("labels", []),
-                "dependsOn": task.get("dependsOn", []),
-                "relatedTopics": task.get("relatedTopics", []),
-                "status": statuses.get(task["id"], "not_started"),
-            }
-        )
+    progress, failure = require_progress("catalog", root, catalog)
+    if failure:
+        return failure
+    statuses = statuses_from(progress)
+    # Every field the course author put in the catalog passes through untouched, so new
+    # kinds of information (purpose, learning goals, ...) reach the agent with no e0 change.
+    tasks = [
+        {**task, "status": statuses.get(task["id"], "not_started")}
+        for task in ordered_tasks(catalog)
+    ]
 
     done = sum(1 for task in tasks if task["status"] == "complete")
-    return ok(
+    return reply(
         "catalog",
-        {"tasks": tasks, "contentTag": catalog.get("contentTag")},
+        {"course": catalog.get("course", {}), "tasks": tasks},
         f"{len(tasks)} tasks, {done} complete.",
     )
 
@@ -666,54 +733,41 @@ def cmd_status(args):
     if failure:
         return failure
 
-    statuses = task_status(root)
-    current = None
-    for task in catalog.get("tasks", []):
-        if statuses.get(task["id"]) == "in_progress":
-            current = {"id": task["id"], "title": task["title"]}
-            break
+    progress, failure = require_progress("status", root, catalog)
+    if failure:
+        return failure
+    statuses = statuses_from(progress)
 
-    upcoming = next_task(catalog, statuses)
-    upcoming_summary = None
-    if upcoming is not None:
-        upcoming_summary = {
-            "id": upcoming["id"],
-            "title": upcoming["title"],
-            "unmetDependencies": unmet_dependencies(upcoming, statuses),
-        }
+    in_progress = [
+        {**task_summary(task), "issue": progress[task["id"]]["issue"]}
+        for task in tasks_in_progress(catalog, statuses)
+    ]
+    ready = [task_summary(task) for task in available_tasks(catalog, statuses)]
+    completed = sorted(
+        task["id"] for task in ordered_tasks(catalog) if statuses.get(task["id"]) == "complete"
+    )
 
-    pinned = catalog.get("contentTag")
-    update = "unknown"
+    def names(tasks):
+        return ", ".join(f"{task['id']}: {task['title']}" for task in tasks)
 
-    completed = [task_id for task_id, state in statuses.items() if state == "complete"]
-
-    if current:
-        message = f"You are working on {current['id']}: {current['title']}."
-    elif upcoming_summary:
-        message = f"Nothing in progress. Next up is {upcoming_summary['id']}: {upcoming_summary['title']}."
-    else:
+    if in_progress and ready:
+        message = f"You are working on {names(in_progress)}. Also ready to start: {names(ready)}."
+    elif in_progress:
+        message = f"You are working on {names(in_progress)}. Finish it to unlock the next tasks."
+    elif ready:
+        message = f"Nothing in progress. Ready to start: {names(ready)}."
+    elif len(completed) == len(catalog.get("tasks", [])):
         message = "Every task is complete."
+    else:
+        message = "Nothing in progress and nothing is ready to start."
 
-    return ok(
+    return reply(
         "status",
         {
-            "current": current,
-            "next": upcoming_summary,
-            "completed": sorted(completed),
-            "contentTag": pinned,
-            "update": update,
-            "workflow": (
-                "Run `e0 status` at the start of every session. "
-                "Tasks: `e0 start <id>` returns the canonical task text in data.canonical — "
-                "personalize it (select variant branches, fill retone blocks), "
-                "strip all markers, write clean Markdown to content/<id>/task.md, "
-                "run `e0 verify <id>`. Work on a feature branch until `e0 check` passes, "
-                "then open a GitHub issue titled [<id>] <title>. "
-                "Knowledge base: `e0 read <topic>`. "
-                "Never change text outside e0:variant and e0:retone markers. "
-                "Never start a task without being asked. "
-                "Never perform git operations for the student. "
-            ),
+            "inProgress": in_progress,
+            "next": ready,
+            "completed": completed,
+            "update": "unknown",
         },
         message,
     )
@@ -752,61 +806,83 @@ def download_checks(root, task_id, config):
     return result
 
 
-def cmd_start(args):
-    root, failure = require_repo("start")
+def resolve_task(command, args):
+    """Shared entry for commands that take a task id. Returns (root, catalog, task, None)
+    or (None, None, None, problem_payload)."""
+    root, failure = require_repo(command)
     if failure:
-        return failure
+        return None, None, None, failure
 
-    catalog, failure = require_content("start", root)
+    catalog, failure = require_content(command, root)
     if failure:
-        return failure
+        return None, None, None, failure
 
+    available = ", ".join(task["id"] for task in ordered_tasks(catalog))
     if not args:
-        available = ", ".join(task["id"] for task in catalog.get("tasks", []))
-        return problem(
-            "start",
-            "e0 start needs a task id.",
-            f"Use: e0 start <id>. The tasks you can start are: {available}",
+        return None, None, None, problem(
+            command,
+            f"e0 {command} needs a task id.",
+            f"Use: e0 {command} <id>. The tasks are: {available}",
         )
 
     task = find_task(catalog, args[0])
     if task is None:
-        available = ", ".join(item["id"] for item in catalog.get("tasks", []))
-        return problem(
-            "start",
+        return None, None, None, problem(
+            command,
             f"There is no task called '{args[0]}'.",
-            f"The tasks you can start are: {available}",
+            f"The tasks are: {available}",
         )
+    return root, catalog, task, None
 
-    task_id = task["id"]
+
+def task_paths(task_id):
+    return {
+        "task": f"content/{task_id.lower()}/task.md",
+        "checks": f"tests/school-checks/{task_id.lower()}",
+    }
+
+
+def fetch_canonical(command, root, task_id):
+    """Return (canonical_text, None) or (None, problem_payload)."""
     config = read_config(root)
-
-    canonical_text = fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/task.md"))
-    if canonical_text is None:
-        return problem(
-            "start",
+    text = fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/task.md"))
+    if text is None:
+        return None, problem(
+            command,
             f"e0 could not download task {task_id}.",
             "Check your internet connection.",
         )
+    return text, None
 
-    checks = download_checks(root, task_id, config)
 
-    statuses = task_status(root)
+def dependency_warning(task, statuses):
     unmet = unmet_dependencies(task, statuses)
-    warnings = []
-    if unmet:
-        warnings.append(
-            {
-                "kind": "dependency",
-                "message": (
-                    f"{task_id} builds on {', '.join(unmet)}, which "
-                    f"{'is' if len(unmet) == 1 else 'are'} not complete yet. "
-                    "You can keep going, but you might be missing important background."
-                ),
-            }
-        )
-        append_event(root, "override", taskId=task_id, unmet=unmet)
+    if not unmet:
+        return None
+    return {
+        "kind": "dependency",
+        "message": (
+            f"{task['id']} builds on {', '.join(unmet)}, which "
+            f"{'is' if len(unmet) == 1 else 'are'} not complete yet. "
+            "You can keep going, but you might be missing important background."
+        ),
+    }
 
+
+def cmd_task(args):
+    """Fetch a task for the agent: the canonical text, what may be personalized, the checks.
+    Starts nothing, so it is safe when the student only wants to hear about a task."""
+    root, catalog, task, failure = resolve_task("task", args)
+    if failure:
+        return failure
+
+    task_id = task["id"]
+    canonical_text, failure = fetch_canonical("task", root, task_id)
+    if failure:
+        return failure
+
+    warnings = []
+    checks = download_checks(root, task_id, read_config(root))
     for name in checks["mismatched"]:
         warnings.append(
             {
@@ -818,71 +894,119 @@ def cmd_start(args):
     profile = read_profile(root) or detect_profile(root)
     try:
         payload = personalization_payload(canonical_text, profile)
-        marker_problem = None
     except MarkerError as exc:
         payload = {"variants": [], "retoneBlocks": [], "facts": {}}
-        marker_problem = str(exc)
         warnings.append(
             {
                 "kind": "markers",
                 "message": f"The personalization markers in this task have a problem ({exc}). "
-                "The task text is still correct. It just won't be personalized for you.",
+                "The task text is still correct. Write it as it is, without the markers.",
             }
         )
 
-    append_event(root, "task_started", taskId=task_id)
+    # Progress is nice to have here, not required: "tell me about T020" must work even when
+    # gh is not set up yet.
+    progress, error = github_progress(root, catalog)
+    if progress is None:
+        statuses = {}
+        status = "unknown"
+        warnings.append(
+            {
+                "kind": "progress",
+                "message": f"e0 could not read the GitHub issues of this repo ({error}), "
+                "so it does not know whether this task was started.",
+            }
+        )
+    else:
+        statuses = statuses_from(progress)
+        status = statuses.get(task_id, "not_started")
 
-    body = (
-        f"{task.get('description', '')}\n\n"
-        f"Working through **{task['title']}**.\n\n"
-        f"Write the personalized task to: `content/{task_id.lower()}/task.md`"
-    ).strip()
+    return reply(
+        "task",
+        {
+            "taskId": task_id,
+            "task": task,
+            "canonical": canonical_text,
+            "personalization": payload,
+            "paths": task_paths(task_id),
+            "status": status,
+            "unmetDependencies": unmet_dependencies(task, statuses),
+            "warnings": warnings,
+        },
+        f"The original text of {task_id} is in data.canonical. Personalize it with "
+        f"data.personalization and write clean Markdown to content/{task_id.lower()}/task.md. "
+        "data.task has what the catalog says about it. Nothing was started.",
+    )
 
-    return ok(
+
+def cmd_start(args):
+    """Start a task: make sure the task file is in place and follows the rules, then hand
+    back the GitHub issue that marks the task as in progress."""
+    root, catalog, task, failure = resolve_task("start", args)
+    if failure:
+        return failure
+
+    task_id = task["id"]
+    progress, failure = require_progress("start", root, catalog)
+    if failure:
+        return failure
+    statuses = statuses_from(progress)
+
+    if task_id in progress:
+        state = progress[task_id]["state"]
+        issue = progress[task_id]["issue"]
+        return problem(
+            "start",
+            f"{task_id} is already {'in progress' if state == 'in_progress' else 'complete'}: "
+            f"issue #{issue['number']} ({issue['url']}).",
+            "Run 'e0 status' to see where the student is.",
+        )
+
+    task_path = task_content_dir(root, task_id) / "task.md"
+    if not task_path.exists():
+        return problem(
+            "start",
+            f"The task file content/{task_id.lower()}/task.md does not exist yet.",
+            f"Run 'e0 task {task_id}', personalize data.canonical, write it to that file, "
+            f"then run 'e0 start {task_id}' again.",
+        )
+
+    canonical_text, failure = fetch_canonical("start", root, task_id)
+    if failure:
+        return failure
+
+    personalized_text = task_path.read_text(encoding="utf-8")
+    verdict = verify_task_file("start", task_id, canonical_text, personalized_text)
+    if "problem" in verdict:
+        return verdict
+
+    download_checks(root, task_id, read_config(root))
+
+    warnings = []
+    warning = dependency_warning(task, statuses)
+    if warning:
+        warnings.append(warning)
+
+    return reply(
         "start",
         {
             "taskId": task_id,
-            "title": task["title"],
-            "canonical": canonical_text,
-            "paths": {
-                "task": f"content/{task_id.lower()}/task.md",
-                "checks": f"tests/school-checks/{task_id.lower()}",
-            },
-            "relatedTopics": task.get("relatedTopics", []),
+            "task": task,
+            "paths": task_paths(task_id),
             "warnings": warnings,
-            "personalization": payload,
-            "markerProblem": marker_problem,
-            "issue": {"title": f"[{task_id}] {task['title']}", "body": body},
+            "issue": {"title": f"[{task_id}] {task['title']}", "body": personalized_text},
         },
-        f"Canonical text for {task_id} is in data.canonical. "
-        f"Personalize it and write to content/{task_id.lower()}/task.md, "
-        f"then run e0 verify {task_id}.",
+        f"{task_id} is ready. Open a GitHub issue with data.issue (title and body exactly as "
+        f"given). The open issue is what marks {task_id} as in progress.",
     )
 
 
 def cmd_verify(args):
-    root, failure = require_repo("verify")
+    """Check that content/<id>/task.md still carries every protected part of the original.
+    Only needed after the agent edited the file (to add a note)."""
+    root, catalog, task, failure = resolve_task("verify", args)
     if failure:
         return failure
-
-    if not args:
-        return problem(
-            "verify",
-            "e0 verify needs a task id.",
-            "Use: e0 verify <taskId>",
-        )
-
-    catalog, failure = require_content("verify", root)
-    if failure:
-        return failure
-
-    task = find_task(catalog, args[0])
-    if task is None:
-        return problem(
-            "verify",
-            f"There is no task called '{args[0]}'.",
-            "Run 'e0 catalog' to see the task ids.",
-        )
 
     task_id = task["id"]
     config = read_config(root)
@@ -891,36 +1015,38 @@ def cmd_verify(args):
     if canonical_text is None:
         return problem(
             "verify",
-            f"e0 could not download the canonical task for {task_id}.",
+            f"e0 could not download the original text of {task_id}.",
             "Check your internet connection.",
         )
 
-    personalized_path = task_content_dir(root, task_id) / "task.md"
-    if not personalized_path.exists():
+    task_path = task_content_dir(root, task_id) / "task.md"
+    if not task_path.exists():
         return problem(
             "verify",
-            f"The personalized task for {task_id} does not exist yet.",
-            f"Personalize the canonical text from 'e0 start {task_id}' "
+            f"The task file for {task_id} does not exist yet.",
+            f"Run 'e0 task {task_id}', personalize data.canonical, "
             f"and write it to content/{task_id.lower()}/task.md.",
         )
 
-    result = verify_document(canonical_text, personalized_path.read_text(encoding="utf-8"))
+    return verify_task_file(
+        "verify", task_id, canonical_text, task_path.read_text(encoding="utf-8")
+    )
+
+
+def verify_task_file(command, task_id, canonical_text, personalized_text):
+    """The shared verdict for `verify` and `start`: a success, or a problem with violations."""
+    result = verify_document(canonical_text, personalized_text)
+    path = f"content/{task_id.lower()}/task.md"
 
     if not result["violations"]:
-        return ok(
-            "verify",
-            {"violations": [], "path": f"content/{task_id.lower()}/task.md"},
-            "Your personalization follows the rules.",
-        )
+        return reply(command, {"violations": [], "path": path}, "The task file follows the rules.")
 
-    append_event(
-        root, "verify_failed", taskId=task_id, count=len(result["violations"])
-    )
     payload = problem(
-        "verify",
-        "The personalized task changed text it is not allowed to change. "
+        command,
+        "The task file changed text it is not allowed to change. "
         + " ".join(v["message"] for v in result["violations"]),
-        f"Re-personalize from the canonical text returned by 'e0 start {task_id}'.",
+        f"Personalize again from data.canonical of 'e0 task {task_id}': keep one branch "
+        "per variant, fill retone blocks only when asked, change nothing else, remove the markers.",
     )
     payload["data"] = {"violations": result["violations"]}
     return payload
@@ -945,25 +1071,23 @@ def cmd_check(args):
             )
         task_id = task["id"]
     else:
-        statuses = task_status(root)
-        in_progress = [
-            item["id"]
-            for item in catalog.get("tasks", [])
-            if statuses.get(item["id"]) == "in_progress"
-        ]
+        progress, failure = require_progress("check", root, catalog)
+        if failure:
+            return failure
+        in_progress = tasks_in_progress(catalog, statuses_from(progress))
         if not in_progress:
             return problem(
                 "check",
                 "No task is in progress. e0 does not know what to check.",
                 "Use 'e0 check <taskId>', or start a task first with 'e0 start <taskId>'.",
             )
-        task_id = in_progress[0]
+        task_id = in_progress[0]["id"]
 
     if not school_checks_dir(root, task_id).exists():
         return problem(
             "check",
             f"The checks for {task_id} have not been downloaded yet.",
-            f"Run 'e0 start {task_id}' first.",
+            f"Run 'e0 task {task_id}' first. It downloads them.",
         )
 
     warnings = [
@@ -976,7 +1100,6 @@ def cmd_check(args):
     ]
 
     passed, output = run_checks(root, task_id)
-    append_event(root, "checks_run", taskId=task_id, passed=passed)
 
     data = {
         "taskId": task_id,
@@ -986,7 +1109,7 @@ def cmd_check(args):
     }
 
     if passed:
-        return ok("check", data, f"All checks for {task_id} pass.")
+        return reply("check", data, f"All checks for {task_id} pass.")
 
     payload = problem(
         "check",
@@ -1014,7 +1137,7 @@ def cmd_read(args):
                 topics = json.loads(index_text).get("topics", [])
             except ValueError:
                 pass
-        return ok(
+        return reply(
             "read",
             {"topics": topics},
             "Use 'e0 read <topic>' to read a knowledge base tutorial.",
@@ -1036,7 +1159,7 @@ def cmd_read(args):
             "Run 'e0 read' (no topic) to see available topics.",
         )
 
-    return ok(
+    return reply(
         "read",
         {
             "topic": topic,
@@ -1049,7 +1172,7 @@ def cmd_read(args):
 
 
 def cmd_help(args):
-    return ok(
+    return reply(
         "help",
         {"commands": sorted(COMMANDS)},
         "Available commands: " + ", ".join(sorted(COMMANDS)),
@@ -1067,6 +1190,7 @@ COMMANDS = {
     "read": cmd_read,
     "start": cmd_start,
     "status": cmd_status,
+    "task": cmd_task,
     "verify": cmd_verify,
 }
 

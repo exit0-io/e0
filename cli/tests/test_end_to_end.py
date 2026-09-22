@@ -2,49 +2,45 @@ import subprocess
 
 
 def test_a_student_can_go_from_bootstrap_to_passing_checks(
-    run_e0, student_repo, e0mod
+    run_e0, student_repo, personalize, set_issues
 ):
     # 1. Agent bootstraps.
     payload, code = run_e0(["init"], student_repo)
-    assert code == 0 and payload["ok"] is True
+    assert code == 0 and "problem" not in payload
     assert payload["data"]["taskCount"] == 2
 
-    # 2. Agent orients.
+    # 2. Agent orients. No issues yet, so nothing is in progress.
     payload, _ = run_e0(["status"], student_repo)
-    assert payload["data"]["next"]["id"] == "T010"
+    assert [t["id"] for t in payload["data"]["next"]] == ["T010"]
 
     # 3. Student asks what the course covers.
     payload, _ = run_e0(["catalog"], student_repo)
     assert [t["id"] for t in payload["data"]["tasks"]] == ["T010", "T020"]
 
-    # 4. Agent starts the first task.
+    # 4. Student asks about the first task. The agent fetches it and, silently,
+    #    personalizes it: one variant branch, no markers, a note where retone allows it.
+    payload, _ = run_e0(["task", "T010"], student_repo)
+    assert payload["data"]["task"]["purpose"]
+    text = personalize(payload, note="You know Python well, so this will be quick.")
+    task_file = student_repo / "content" / "t010" / "task.md"
+    task_file.parent.mkdir(parents=True, exist_ok=True)
+    task_file.write_text(text, encoding="utf-8")
+    assert "<!--" not in text
+
+    # 5. Student asks to start. e0 checks the file and hands back the issue.
     payload, _ = run_e0(["start", "T010"], student_repo)
+    assert "problem" not in payload, payload
     assert payload["data"]["warnings"] == []
-    canonical = payload["data"]["canonical"]
-    assert canonical
+    assert payload["data"]["issue"]["body"] == text
 
-    # 5. Agent personalizes: strip markers, pick a branch, write clean Markdown.
-    regions = e0mod.parse_regions(canonical)
-    facts = payload["data"]["personalization"]["facts"]
-    clean_parts = []
-    for r in regions:
-        if r["kind"] == "fixed":
-            clean_parts.append(r["text"])
-        elif r["kind"] == "variant":
-            chosen = e0mod.select_branch(r["branches"], facts)
-            clean_parts.append((chosen["text"] if chosen else r["branches"][0]["text"]) + "\n")
-        else:
-            clean_parts.append("Skim this.\n")
-    task_dir = student_repo / "content" / "t010"
-    task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.md").write_text("".join(clean_parts), encoding="utf-8")
+    # 6. The agent opens the issue. From now on that issue is the progress record.
+    set_issues(student_repo, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], student_repo)
+    assert [t["id"] for t in payload["data"]["inProgress"]] == ["T010"]
 
-    # 6. Verify accepts the personalization.
-    payload, code = run_e0(["verify", "T010"], student_repo)
-    assert code == 0 and payload["ok"] is True
-
-    # 7. Checks fail before any code is written.
-    payload, _ = run_e0(["check", "T010"], student_repo)
+    # 7. Checks fail before any code is written. `check` finds the in-progress task itself.
+    payload, _ = run_e0(["check"], student_repo)
+    assert payload["data"]["taskId"] == "T010"
     assert payload["data"]["passed"] is False
 
     # 8. Student writes the code.
@@ -54,10 +50,16 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
 
     # 9. Checks pass.
     payload, code = run_e0(["check", "T010"], student_repo)
-    assert code == 0 and payload["ok"] is True
+    assert code == 0 and "problem" not in payload
     assert payload["data"]["passed"] is True
 
-    # 10. Nothing in .exit0/ leaked into git status.
+    # 10. The student closes the issue. T010 is complete and T020 is unlocked.
+    set_issues(student_repo, [("T010", "CLOSED")])
+    payload, _ = run_e0(["status"], student_repo)
+    assert payload["data"]["completed"] == ["T010"]
+    assert [t["id"] for t in payload["data"]["next"]] == ["T020"]
+
+    # 11. Nothing in .exit0/ leaked into git status.
     proc = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=str(student_repo),
@@ -68,21 +70,17 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
     assert tracked_changes == [], ".exit0/ must never appear in git status"
 
 
-def test_verify_catches_altered_fixed_text(run_e0, student_repo):
+def test_verify_catches_altered_fixed_text(run_e0, student_repo, write_task_file):
     run_e0(["init"], student_repo)
-    start_payload, _ = run_e0(["start", "T010"], student_repo)
-    canonical = start_payload["data"]["canonical"]
-
-    task_dir = student_repo / "content" / "t010"
-    task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.md").write_text(
-        canonical.replace("**standard library**", "**the requests library**"),
-        encoding="utf-8",
+    text = write_task_file(student_repo, "T010")
+    task_file = student_repo / "content" / "t010" / "task.md"
+    task_file.write_text(
+        text.replace("**standard library**", "**the requests library**"), encoding="utf-8"
     )
 
     payload, code = run_e0(["verify", "T010"], student_repo)
     assert code == 0
-    assert payload["ok"] is False
+    assert "problem" in payload
     assert payload["data"]["violations"]
 
 
@@ -90,9 +88,7 @@ def test_every_command_survives_a_hostile_environment(run_e0, tmp_path):
     """No command may crash, whatever state it is run in."""
     empty = tmp_path / "empty"
     empty.mkdir()
-    for command in ["status", "catalog", "start", "verify", "check", "read", "init", "help"]:
+    for command in ["status", "catalog", "task", "start", "verify", "check", "read", "init", "help"]:
         payload, code = run_e0([command], empty)
         assert code == 0, f"{command} must exit 0"
-        assert isinstance(payload["ok"], bool), f"{command} must return a bool ok"
-
-
+        assert "command" in payload, f"{command} must return an envelope"

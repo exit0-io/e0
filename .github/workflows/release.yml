@@ -1,0 +1,68 @@
+# Release e0 automatically.
+#
+# Every push to main that changes cli/bin/e0 reads E0_VERSION from the script. If no git tag
+# with that name exists yet, this workflow creates the tag and a GitHub release, and uploads
+# the script as a release asset named `e0`.
+#
+# Why: the learning skill pins RELEASE=<E0_VERSION> and downloads e0 from that tag. If the
+# version in the code is bumped but the tag is never created, every new student hits a 404.
+# With this workflow the tag exists as soon as the code lands on main.
+#
+# The asset makes `https://github.com/exit0-io/e0/releases/latest/download/e0` a stable
+# "latest release" URL, which the skill uses as a fallback.
+
+name: Release e0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - cli/bin/e0
+      - cli/skills/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read E0_VERSION
+        id: version
+        run: |
+          version=$(grep -oP '^E0_VERSION = "\K[^"]+' cli/bin/e0)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "E0_VERSION is $version"
+
+      - name: Check that the skill pins the same release
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          pinned=$(grep -oP 'RELEASE="?\Kv[0-9][0-9.]*' cli/skills/learning/references/setup-and-update.md | sort -u)
+          if [ "$pinned" != "$version" ]; then
+            echo "::error::E0_VERSION is $version but the setup reference pins: $pinned"
+            exit 1
+          fi
+
+      - name: Check that e0 runs
+        run: python3 cli/bin/e0 help | grep -q '"command": "help"'
+
+      - name: Create the release if the tag is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "Tag $version already exists. Nothing to release."
+            exit 0
+          fi
+          cp cli/bin/e0 e0
+          gh release create "$version" e0 \
+            --target "$GITHUB_SHA" \
+            --title "$version" \
+            --generate-notes
+          echo "Released $version"

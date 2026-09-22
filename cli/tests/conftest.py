@@ -33,13 +33,75 @@ def e0mod():
 _COVERAGE_CFG = str(FRAMEWORK_SRC / "setup.cfg")
 
 
+ISSUES_FILE = ".fake-gh-issues.json"
+
+# A stand-in for the GitHub CLI. `gh issue list --json ...` prints the issues found in
+# <cwd>/.fake-gh-issues.json (an empty list if the file is missing). A file holding
+# {"error": "..."} makes it fail the way a logged-out gh would.
+FAKE_GH = f"""#!/usr/bin/env python3
+import json, os, sys
+path = os.path.join(os.getcwd(), {ISSUES_FILE!r})
+if not os.path.exists(path):
+    print("[]")
+    sys.exit(0)
+data = json.load(open(path, encoding="utf-8"))
+if isinstance(data, dict) and "error" in data:
+    print(data["error"], file=sys.stderr)
+    sys.exit(4)
+print(json.dumps(data))
+"""
+
+
 @pytest.fixture
-def run_e0():
+def fake_gh_bin(tmp_path):
+    directory = tmp_path / "fake-bin"
+    directory.mkdir()
+    script = directory / "gh"
+    script.write_text(FAKE_GH, encoding="utf-8")
+    script.chmod(0o755)
+    return directory
+
+
+@pytest.fixture
+def set_issues():
+    """Write the GitHub issues the fake gh should report for a repo.
+
+    set_issues(repo, [("T010", "OPEN"), ("T020", "CLOSED")]) or a raw list of issue dicts.
+    """
+
+    def _set(repo, issues):
+        records = []
+        for index, item in enumerate(issues, start=1):
+            if isinstance(item, tuple):
+                task_id, state = item
+                item = {
+                    "number": index,
+                    "title": f"[{task_id}] some title",
+                    "state": state,
+                    "url": f"https://github.com/student/repo/issues/{index}",
+                }
+            records.append(item)
+        (pathlib.Path(repo) / ISSUES_FILE).write_text(json.dumps(records), encoding="utf-8")
+
+    return _set
+
+
+@pytest.fixture
+def gh_unavailable():
+    def _break(repo, error="gh: To get started with GitHub CLI, please run: gh auth login"):
+        (pathlib.Path(repo) / ISSUES_FILE).write_text(json.dumps({"error": error}), encoding="utf-8")
+
+    return _break
+
+
+@pytest.fixture
+def run_e0(fake_gh_bin):
     """Invoke e0 as a real subprocess and return (parsed_json, exit_code)."""
 
     def _run(args, cwd, env=None):
         merged = dict(os.environ)
         merged.update(env or {})
+        merged["PATH"] = f"{fake_gh_bin}{os.pathsep}{merged.get('PATH', '')}"
         merged.setdefault("COVERAGE_PROCESS_START", _COVERAGE_CFG)
         proc = subprocess.run(
             [sys.executable, str(E0_PATH), *args],
@@ -147,10 +209,51 @@ def student_repo(tmp_path, content_server, framework_server):
         ".exit0/skills/\n"
         ".exit0/state/\n"
         "content/\n"
-        "tests/school-checks/\n",
+        "tests/school-checks/\n"
+        f"{ISSUES_FILE}\n",
         encoding="utf-8",
     )
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "initial")
     return repo
+
+
+@pytest.fixture
+def personalize(e0mod):
+    """What the agent does with `e0 task` output: keep the matching variant branch, leave
+    retone blocks as given (or fill them with `note`), strip every marker."""
+
+    def _personalize(task_payload, note=None):
+        canonical = task_payload["data"]["canonical"]
+        facts = task_payload["data"]["personalization"]["facts"]
+        parts = []
+        for region in e0mod.parse_regions(canonical):
+            if region["kind"] == "fixed":
+                parts.append(region["text"])
+            elif region["kind"] == "variant":
+                chosen = e0mod.select_branch(region["branches"], facts) or region["branches"][0]
+                parts.append(chosen["text"] + "\n")
+            elif note is not None:
+                parts.append(note + "\n")
+            else:
+                parts.append(region["text"])
+        return "".join(parts)
+
+    return _personalize
+
+
+@pytest.fixture
+def write_task_file(run_e0, personalize):
+    """Run `e0 task <id>` and write the personalized file, as the agent would. Returns the text."""
+
+    def _write(repo, task_id, note=None):
+        payload, _ = run_e0(["task", task_id], repo)
+        assert "problem" not in payload, payload
+        text = personalize(payload, note=note)
+        path = pathlib.Path(repo) / payload["data"]["paths"]["task"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return text
+
+    return _write

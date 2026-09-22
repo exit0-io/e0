@@ -2,16 +2,19 @@ import pytest
 
 
 @pytest.fixture
-def started(run_e0, student_repo):
+def started(run_e0, student_repo, write_task_file, set_issues):
+    """T010 fetched, personalized, and marked in progress by an open issue."""
     run_e0(["init"], student_repo)
+    write_task_file(student_repo, "T010")
     run_e0(["start", "T010"], student_repo)
+    set_issues(student_repo, [("T010", "OPEN")])
     return student_repo
 
 
 def test_check_fails_before_the_student_writes_any_code(run_e0, started):
     payload, code = run_e0(["check", "T010"], started)
     assert code == 0
-    assert payload["ok"] is False
+    assert "problem" in payload
     assert payload["data"]["passed"] is False
 
 
@@ -22,7 +25,7 @@ def test_check_passes_once_the_code_is_correct(run_e0, started):
     payload, code = run_e0(["check", "T010"], started)
 
     assert code == 0
-    assert payload["ok"] is True
+    assert "problem" not in payload
     assert payload["data"]["passed"] is True
 
 
@@ -51,18 +54,28 @@ def test_check_hashes_detects_drift(e0mod, started):
 
 
 def test_check_uses_the_in_progress_task_by_default(run_e0, started):
+    """The in-progress task is the one with an open issue."""
     payload, _ = run_e0(["check"], started)
     assert payload["data"]["taskId"] == "T010"
 
 
-def test_check_on_a_task_that_was_never_started_gives_guidance(run_e0, started):
+def test_check_without_an_id_and_without_an_open_issue_gives_guidance(run_e0, started, set_issues):
+    set_issues(started, [])
+    payload, code = run_e0(["check"], started)
+    assert code == 0
+    assert "problem" in payload
+    assert "e0 check <taskId>" in payload["guidance"]
+
+
+def test_check_with_an_id_does_not_need_gh(run_e0, started, gh_unavailable):
+    gh_unavailable(started)
+    payload, _ = run_e0(["check", "T010"], started)
+    assert "data" in payload
+    assert payload["data"]["taskId"] == "T010"
+
+
+def test_check_on_a_task_that_was_never_fetched_gives_guidance(run_e0, started):
     payload, code = run_e0(["check", "T020"], started)
     assert code == 0
-    assert payload["ok"] is False
-    assert "start" in payload["guidance"]
-
-
-def test_check_records_an_event(run_e0, started, e0mod):
-    run_e0(["check", "T010"], started)
-    events = e0mod.read_events(started)
-    assert any(event["event"] == "checks_run" for event in events)
+    assert "problem" in payload
+    assert "e0 task T020" in payload["guidance"]

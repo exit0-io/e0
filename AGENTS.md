@@ -1,7 +1,8 @@
 # Working in this repository
 
-This repo builds Exit Zero framework - a CLI (`e0`) that gives students an
-agent-native learning experience of software engineering skills.
+This repo builds the Exit0 framework - a CLI (`e0`) that gives students an
+agent-native learning experience of software engineering skills. The name is written
+**Exit0** everywhere a student or an agent can read it (not "Exit Zero").
 
 A student starting a software engineering course by forking a GitHub template repo, then works through it with their coding agent (just send **hi** in the chat panel to start). The agent fetches the course technical content, instructs the student task by task, runs tests or students' code, reviews PRs, and asks the student questions on its implementation. 
 

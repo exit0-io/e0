@@ -7,30 +7,83 @@ def initialized(run_e0, student_repo):
     return student_repo
 
 
-def test_status_on_a_fresh_course_suggests_the_first_task(run_e0, initialized):
+def test_status_on_a_fresh_course_lists_the_ready_tasks(run_e0, initialized):
     payload, code = run_e0(["status"], initialized)
     assert code == 0
-    assert payload["ok"] is True
-    assert payload["data"]["next"]["id"] == "T010"
-    assert payload["data"]["current"] is None
+    assert "problem" not in payload
+    assert [task["id"] for task in payload["data"]["next"]] == ["T010"]
+    assert payload["data"]["inProgress"] == []
+    assert payload["data"]["completed"] == []
 
 
-def test_status_reports_the_task_in_progress(run_e0, initialized, e0mod):
-    e0mod.append_event(initialized, "task_started", taskId="T010")
+def test_progress_comes_from_github_issues(run_e0, initialized, set_issues):
+    """An open issue titled [T010] ... is in progress. A closed one is complete."""
+    set_issues(initialized, [("T010", "OPEN")])
     payload, _ = run_e0(["status"], initialized)
-    assert payload["data"]["current"]["id"] == "T010"
+    assert [task["id"] for task in payload["data"]["inProgress"]] == ["T010"]
+    assert payload["data"]["inProgress"][0]["issue"]["number"] == 1
+    assert payload["data"]["next"] == []
+    assert "T010" in payload["message"]
+
+    set_issues(initialized, [("T010", "CLOSED")])
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["completed"] == ["T010"]
+    assert [task["id"] for task in payload["data"]["next"]] == ["T020"]
 
 
-def test_next_task_skips_completed_work(e0mod, initialized):
+def test_status_next_is_a_list_because_tasks_form_a_tree(run_e0, initialized):
+    payload, _ = run_e0(["status"], initialized)
+    assert isinstance(payload["data"]["next"], list)
+    assert "T020" not in [task["id"] for task in payload["data"]["next"]]
+
+
+def test_an_open_issue_wins_over_a_closed_one_for_the_same_task(run_e0, initialized, set_issues):
+    set_issues(initialized, [("T010", "CLOSED"), ("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    assert [task["id"] for task in payload["data"]["inProgress"]] == ["T010"]
+    assert payload["data"]["completed"] == []
+
+
+def test_issues_that_are_not_tasks_are_ignored(run_e0, initialized, set_issues):
+    set_issues(
+        initialized,
+        [
+            {"number": 7, "title": "Fix the README", "state": "OPEN", "url": "u"},
+            {"number": 8, "title": "[T999] not a task", "state": "OPEN", "url": "u"},
+            {"number": 9, "title": "[t010] lowercase is fine", "state": "OPEN", "url": "u"},
+        ],
+    )
+    payload, _ = run_e0(["status"], initialized)
+    assert [task["id"] for task in payload["data"]["inProgress"]] == ["T010"]
+
+
+def test_status_without_gh_is_a_problem_with_guidance(run_e0, initialized, gh_unavailable):
+    gh_unavailable(initialized)
+    payload, code = run_e0(["status"], initialized)
+    assert code == 0
+    assert "problem" in payload
+    assert "gh auth" in payload["guidance"]
+
+
+def test_status_carries_no_workflow_text(run_e0, initialized):
+    """Procedure lives in the learning skill, not in the status envelope."""
+    payload, _ = run_e0(["status"], initialized)
+    assert "workflow" not in payload["data"]
+    assert "contentTag" not in payload["data"]
+
+
+def test_nothing_about_progress_is_stored_locally(run_e0, initialized, set_issues):
+    set_issues(initialized, [("T010", "OPEN")])
+    run_e0(["status"], initialized)
+    state = initialized / ".exit0" / "state"
+    assert [p.name for p in state.iterdir()] == ["profile.json"]
+
+
+def test_available_tasks_needs_every_dependency_complete(e0mod, initialized):
     catalog = e0mod.read_catalog(initialized)
-    statuses = {"T010": "complete"}
-    assert e0mod.next_task(catalog, statuses)["id"] == "T020"
-
-
-def test_next_task_is_none_when_everything_is_done(e0mod, initialized):
-    catalog = e0mod.read_catalog(initialized)
-    statuses = {"T010": "complete", "T020": "complete"}
-    assert e0mod.next_task(catalog, statuses) is None
+    assert [t["id"] for t in e0mod.available_tasks(catalog, {})] == ["T010"]
+    assert [t["id"] for t in e0mod.available_tasks(catalog, {"T010": "in_progress"})] == []
+    assert [t["id"] for t in e0mod.available_tasks(catalog, {"T010": "complete"})] == ["T020"]
 
 
 def test_unmet_dependencies_lists_incomplete_prerequisites(e0mod, initialized):
@@ -45,13 +98,6 @@ def test_status_always_reports_update_as_unknown(run_e0, initialized):
     assert payload["data"]["update"] == "unknown"
 
 
-def test_status_includes_workflow_guidance(run_e0, initialized):
-    payload, _ = run_e0(["status"], initialized)
-    assert "workflow" in payload["data"]
-    assert "e0 start" in payload["data"]["workflow"]
-    assert "e0 verify" in payload["data"]["workflow"]
-
-
 def test_bare_e0_runs_status(run_e0, initialized):
     payload, code = run_e0([], initialized)
     assert code == 0
@@ -61,14 +107,14 @@ def test_bare_e0_runs_status(run_e0, initialized):
 def test_status_before_init_gives_guidance(run_e0, student_repo):
     payload, code = run_e0(["status"], student_repo)
     assert code == 0
-    assert payload["ok"] is False
+    assert "problem" in payload
     assert "init" in payload["guidance"]
 
 
-def test_status_when_all_tasks_complete(run_e0, initialized, e0mod):
-    e0mod.append_event(initialized, "task_completed", taskId="T010")
-    e0mod.append_event(initialized, "task_completed", taskId="T020")
+def test_status_when_all_tasks_complete(run_e0, initialized, set_issues):
+    set_issues(initialized, [("T010", "CLOSED"), ("T020", "CLOSED")])
     payload, _ = run_e0(["status"], initialized)
-    assert payload["ok"] is True
-    assert payload["data"]["current"] is None
-    assert payload["data"]["next"] is None
+    assert "problem" not in payload
+    assert payload["data"]["inProgress"] == []
+    assert payload["data"]["next"] == []
+    assert payload["message"] == "Every task is complete."

@@ -69,39 +69,32 @@ def test_malformed_canonical_markers_are_a_structure_violation(e0mod):
     assert any(v["kind"] == "structure" for v in result["violations"])
 
 
-def test_cmd_verify_passes_for_correct_personalized_file(run_e0, student_repo, e0mod):
+def test_cmd_verify_passes_for_a_correctly_personalized_file(run_e0, student_repo, write_task_file):
     run_e0(["init"], student_repo)
-    start_payload, _ = run_e0(["start", "T010"], student_repo)
-    canonical = start_payload["data"]["canonical"]
-    regions = e0mod.parse_regions(canonical)
-    clean_parts = []
-    for r in regions:
-        if r["kind"] == "fixed":
-            clean_parts.append(r["text"])
-        elif r["kind"] == "variant":
-            clean_parts.append(r["branches"][0]["text"] + "\n")
-        else:
-            clean_parts.append("Skim this section.\n")
-    task_dir = student_repo / "content" / "t010"
-    task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.md").write_text("".join(clean_parts), encoding="utf-8")
+    write_task_file(student_repo, "T010", note="Skim this section.")
     payload, code = run_e0(["verify", "T010"], student_repo)
     assert code == 0
-    assert payload["ok"] is True
+    assert "problem" not in payload
 
 
-def test_cmd_verify_fails_when_fixed_text_is_altered(run_e0, student_repo):
+def test_cmd_verify_fails_when_fixed_text_is_altered(run_e0, student_repo, write_task_file):
     run_e0(["init"], student_repo)
-    start_payload, _ = run_e0(["start", "T010"], student_repo)
-    canonical = start_payload["data"]["canonical"]
-    task_dir = student_repo / "content" / "t010"
-    task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.md").write_text(
-        canonical.replace("**standard library**", "**requests library**"),
-        encoding="utf-8",
+    text = write_task_file(student_repo, "T010")
+    task_file = student_repo / "content" / "t010" / "task.md"
+    task_file.write_text(
+        text.replace("**standard library**", "**requests library**"), encoding="utf-8"
     )
     payload, code = run_e0(["verify", "T010"], student_repo)
     assert code == 0
-    assert payload["ok"] is False
+    assert "problem" in payload
     assert payload["data"]["violations"]
+    assert "e0 task T010" in payload["guidance"]
+
+
+def test_cmd_verify_before_the_file_exists_points_at_e0_task(run_e0, student_repo):
+    run_e0(["init"], student_repo)
+    payload, code = run_e0(["verify", "T010"], student_repo)
+    assert code == 0
+    assert "problem" in payload
+    assert "e0 task T010" in payload["guidance"]
 

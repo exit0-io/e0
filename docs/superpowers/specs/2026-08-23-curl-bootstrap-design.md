@@ -114,31 +114,56 @@ envelope with actionable guidance; they never crash or exit non-zero.
 If catalog fetch fails (no network, wrong repo): return `problem` with guidance to check
 `config.json` and internet connection.
 
-### `e0 start <id>`
+### Progress lives in GitHub issues *(revised 2026-09-16)*
+
+`e0` keeps no progress of its own. There is no event log. The student's progress is the set of
+GitHub issues in their repo: an open issue titled `[T010] ...` means T010 is in progress, a
+closed one means it is complete. `e0` reads them with `gh issue list --state all --json ...`.
+If `gh` is missing or logged out, `status`, `catalog`, and `start` return a `problem` with
+guidance; `task` still works and reports progress as `unknown` with a warning.
+
+The only local state is `.exit0/state/profile.json`.
+
+### `e0 task <id>` *(revised 2026-09-16)*
+
+Fetch a task for the agent. It starts nothing, so the agent can run it when the student only
+asks what a task is about, and again when they ask to start.
 
 1. Read `.exit0/catalog.json` → find task
-2. Fetch `tasks/{id}/task.md` via HTTP → return as `"canonical"` in JSON envelope
+2. Fetch `tasks/{id}/task.md` via HTTP → return as `canonical` (has markers)
 3. Fetch all files listed in `tasks/{id}/checks/checks.json` → write to `tests/school-checks/{id}/`
-4. Return `ok` envelope with: `canonical`, `personalization` payload, `checks` paths,
-   issue title/body, related topics, dependency warnings
+4. Return: `task` (the full catalog entry, every author field passed through), `canonical`,
+   `personalization` (variants, retone blocks, facts), `paths`, `status`, `unmetDependencies`,
+   `warnings`
 
-The agent receives the canonical text, personalizes it in memory (selects variant branches,
-fills retone blocks), strips all `e0:variant`, `e0:retone`, `when:`, and related HTML comment
-markers, and writes clean readable Markdown to `content/{id}/task.md`. It then calls
-`e0 verify <id>`.
+The agent personalizes exactly as the personalization contract says (select one variant branch
+per `facts`, fill retone blocks only from what the student said, change nothing else, strip the
+markers) and writes clean Markdown to `content/{id}/task.md`. It does this silently: the step is
+part of the framework, not something the student is told about.
+
+### `e0 start <id>` *(revised 2026-09-16)*
+
+1. Read progress from GitHub. Refuse with a `problem` if the task already has an issue (open:
+   in progress; closed: complete)
+2. Refuse with a `problem` if `content/{id}/task.md` does not exist (guidance: run `e0 task`)
+3. Re-fetch the canonical and verify the file. Violations are a `problem`; no issue is returned
+4. Unmet dependencies add a `dependency` warning
+5. Return `task`, `paths`, `warnings`, and `issue`: `title` is `[<id>] <title>`, `body` is the
+   **whole personalized task text**. The agent opens the issue; that open issue is the record.
 
 ### `e0 verify <id>`
 
 1. Re-fetch `tasks/{id}/task.md` via HTTP (canonical, has markers)
-2. Read `content/{id}/task.md` (personalized, marker-free clean Markdown)
+2. Read `content/{id}/task.md` (clean Markdown, possibly with an agent note)
 3. Extract all **fixed** text chunks from the canonical (text outside `e0:variant` and `e0:retone` blocks)
-4. Check each fixed chunk appears verbatim in the personalized file
-5. If any fixed chunk is missing or altered: return `problem` listing violations (no restore — the
-   file is clean Markdown; the agent re-personalizes if needed)
-6. If all fixed chunks present: return `ok`
+4. Check each fixed chunk appears verbatim in the file
+5. If any fixed chunk is missing or altered: return `problem` listing violations. Guidance:
+   personalize again from `data.canonical` of `e0 task <id>`
+6. If all fixed chunks present: return a success
+
+`e0 start` runs the same check before it returns the issue.
 
 No canonical is cached to disk. The extra HTTP request is acceptable.
-The current marker-alignment verify algorithm is replaced by this fixed-chunk approach.
 
 ### `e0 read <topic>`
 
@@ -150,7 +175,30 @@ The agent presents the tutorial in chat and optionally writes to
 
 ### `e0 status` / `e0 catalog`
 
-Read from `.exit0/catalog.json` + `state/events.jsonl` — no network call.
+Read from `.exit0/catalog.json` + the repo's GitHub issues (via `gh`). No content fetch.
+
+`status` returns three lists, because tasks form a tree and more than one can be ready at once:
+`inProgress`, `next` (not started, every dependency complete), `completed`. It carries no
+procedure text; procedure lives in the `learning` skill.
+
+`catalog` passes every task's catalog entry through untouched, plus `status`. New author fields
+(purpose, learning goals, ...) reach the agent with no change to `e0`.
+
+### Envelope *(revised 2026-09-16)*
+
+A success is `{"command", "data", "message"}`. A failure is
+`{"command", "problem", "guidance", "message"}` (plus `data` where there is detail, such as
+`verify` violations or `check` output). There is no `ok` boolean: the presence of `problem` is
+the signal.
+
+### Bootstrap and releases *(added 2026-09-16)*
+
+The skill pins `RELEASE=<E0_VERSION>` and downloads
+`raw.githubusercontent.com/exit0-io/e0/<tag>/cli/bin/e0`. If that fails, it falls back to
+`github.com/exit0-io/e0/releases/latest/download/e0`. The `Release e0` GitHub Actions workflow
+creates the tag and the release, with `e0` as an asset, on every push to `main` that changes
+`cli/bin/e0` and introduces a new `E0_VERSION`. `e0 init` fetches its skills from the pinned tag
+and falls back to `main` if the tag is not published.
 
 ### `e0 check` *(deferred)*
 
@@ -207,7 +255,6 @@ After init: tell the student to allow `.exit0/e0` to run without confirmation �
 ## What Is Not Changing
 
 - Single-file Python 3, stdlib only, never crashes, always exits 0
-- JSON envelope shape (`ok`/`problem` with `command`, `data`, `message`, `guidance`)
-- Personalization contract: `e0:variant` and `e0:retone` markers guide the agent; final file is clean Markdown; `e0 verify` checks fixed regions are intact
+- Personalization contract: `e0:variant` and `e0:retone` markers guide the agent; the agent writes the final clean Markdown; `e0 verify` (and `e0 start`) check fixed regions are intact
 - Progress / sync / `e0 complete` — unchanged
 - `e0 feedback`, `e0 profile`, `e0 questions`, `e0 answer` — unchanged
