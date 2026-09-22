@@ -179,30 +179,68 @@ def run_gh(cwd, *args):
 ISSUE_TASK_ID = re.compile(r"^\s*\[([^\]]+)\]")
 
 
-def github_progress(root, catalog):
-    """Read the student's progress from the GitHub issues of this repo.
-
-    Returns (progress, None) or (None, error_text). `progress` maps a task id to
-    {"state": "in_progress" | "complete", "issue": {"number", "url", "state"}}.
-    An open issue wins over a closed one for the same task.
-    """
-    code, out, err = run_gh(
-        root, "issue", "list", "--state", "all", "--limit", "1000",
-        "--json", "number,title,state,url",
-    )
+def gh_json(root, *args):
+    """Run a gh command that prints JSON. Returns (parsed, None) or (None, error_text)."""
+    code, out, err = run_gh(root, *args)
     if code != 0:
         return None, err or out or "the gh command failed"
     try:
-        issues = json.loads(out or "[]")
+        return json.loads(out or "[]"), None
     except ValueError:
         return None, "gh returned something that is not JSON"
 
+
+def _task_for_title(catalog, title):
+    match = ISSUE_TASK_ID.match(title or "")
+    return find_task(catalog, match.group(1)) if match else None
+
+
+def _pr_for(task, issue_number, prs, catalog):
+    """The pull request linked to a task: its title names the task, or its body mentions the
+    task's issue number. A merged PR wins, then an open one, then the newest closed one."""
+    linked = []
+    for pr in prs:
+        by_title = _task_for_title(catalog, pr.get("title")) is task
+        by_body = issue_number is not None and re.search(
+            rf"(?<![\w/])#{issue_number}\b", pr.get("body") or ""
+        )
+        if by_title or by_body:
+            linked.append(pr)
+    if not linked:
+        return None
+    rank = {"MERGED": 0, "OPEN": 1, "CLOSED": 2}
+    best = sorted(linked, key=lambda pr: (rank.get(pr.get("state", "").upper(), 3), -pr.get("number", 0)))[0]
+    return {
+        "number": best.get("number"),
+        "url": best.get("url"),
+        "state": best.get("state"),
+        "merged": best.get("state", "").upper() == "MERGED",
+    }
+
+
+def github_progress(root, catalog):
+    """Read the student's progress from the GitHub issues and pull requests of this repo.
+
+    Returns (progress, None) or (None, error_text). `progress` maps a task id to
+    {"state": "in_progress" | "complete", "issue": {...}, "pr": {...} | None}.
+    An open issue wins over a closed one for the same task.
+    """
+    issues, error = gh_json(
+        root, "issue", "list", "--state", "all", "--limit", "1000",
+        "--json", "number,title,state,url",
+    )
+    if error:
+        return None, error
+    prs, error = gh_json(
+        root, "pr", "list", "--state", "all", "--limit", "1000",
+        "--json", "number,title,state,url,body",
+    )
+    if error:
+        return None, error
+
     progress = {}
     for issue in issues:
-        match = ISSUE_TASK_ID.match(issue.get("title", ""))
-        if not match:
-            continue
-        task = find_task(catalog, match.group(1))
+        task = _task_for_title(catalog, issue.get("title"))
         if task is None:
             continue
         state = "in_progress" if issue.get("state", "").upper() == "OPEN" else "complete"
@@ -216,6 +254,7 @@ def github_progress(root, catalog):
                 "url": issue.get("url"),
                 "state": issue.get("state"),
             },
+            "pr": _pr_for(task, issue.get("number"), prs, catalog),
         }
     return progress, None
 
@@ -738,17 +777,41 @@ def cmd_status(args):
         return failure
     statuses = statuses_from(progress)
 
-    in_progress = [
-        {**task_summary(task), "issue": progress[task["id"]]["issue"]}
-        for task in tasks_in_progress(catalog, statuses)
-    ]
+    def with_github(task):
+        entry = progress[task["id"]]
+        return {**task_summary(task), "issue": entry["issue"], "pr": entry["pr"]}
+
+    in_progress = [with_github(task) for task in tasks_in_progress(catalog, statuses)]
     ready = [task_summary(task) for task in available_tasks(catalog, statuses)]
-    completed = sorted(
-        task["id"] for task in ordered_tasks(catalog) if statuses.get(task["id"]) == "complete"
-    )
+    completed = [
+        with_github(task)
+        for task in ordered_tasks(catalog)
+        if statuses.get(task["id"]) == "complete"
+    ]
+
+    # The protocol for a task: open issue -> feature branch -> PR into main -> checks pass ->
+    # PR merged -> issue closed -> comprehension questions. A closed issue with no merged PR
+    # means a step was skipped. The student may do that; the agent must say so.
+    warnings = [
+        {
+            "kind": "closed_without_pr",
+            "taskId": task["id"],
+            "message": (
+                f"The issue of {task['id']} is closed, but no merged pull request is linked to it. "
+                "The task counts as complete, but the student may have skipped the PR, the checks, "
+                "or the review. Tell them, and offer to reopen the issue if the work is not done."
+            ),
+        }
+        for task in completed
+        if not (task["pr"] and task["pr"]["merged"])
+    ]
 
     def names(tasks):
-        return ", ".join(f"{task['id']}: {task['title']}" for task in tasks)
+        return ", ".join(
+            f"{task['id']}: {task['title']}"
+            + (f" ({task['issue']['url']})" if task.get("issue") else "")
+            for task in tasks
+        )
 
     if in_progress and ready:
         message = f"You are working on {names(in_progress)}. Also ready to start: {names(ready)}."
@@ -767,6 +830,7 @@ def cmd_status(args):
             "inProgress": in_progress,
             "next": ready,
             "completed": completed,
+            "warnings": warnings,
             "update": "unknown",
         },
         message,
@@ -933,8 +997,8 @@ def cmd_task(args):
             "unmetDependencies": unmet_dependencies(task, statuses),
             "warnings": warnings,
         },
-        f"The original text of {task_id} is in data.canonical. Personalize it with "
-        f"data.personalization and write clean Markdown to content/{task_id.lower()}/task.md. "
+        f"The original text of {task_id} is in data.canonical. Apply data.personalization "
+        f"and write the clean Markdown to content/{task_id.lower()}/task.md. "
         "data.task has what the catalog says about it. Nothing was started.",
     )
 

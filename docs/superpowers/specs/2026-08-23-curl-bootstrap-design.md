@@ -122,6 +122,17 @@ closed one means it is complete. `e0` reads them with `gh issue list --state all
 If `gh` is missing or logged out, `status`, `catalog`, and `start` return a `problem` with
 guidance; `task` still works and reports progress as `unknown` with a warning.
 
+Pull requests are read too (`gh pr list --state all`). A PR is linked to a task when its title
+carries `[T010]` or its body mentions the task's issue number (`#12`, `Closes #12`). Merged
+beats open beats closed. `status` returns `inProgress`, `next`, and `completed` as lists of
+objects with `issue` and `pr`, and a `warnings` list: `closed_without_pr` for a completed task
+with no merged PR, so the agent can tell the student a protocol step was skipped and offer to
+reopen the issue. The student may still move on; the agent only makes the choice visible.
+
+The protocol the agent steers by: open issue → feature branch from an updated `main` →
+implement, `e0 check` → PR into `main`, checks pass in CI → merge, close the issue →
+comprehension questions.
+
 The only local state is `.exit0/state/profile.json`.
 
 ### `e0 task <id>` *(revised 2026-09-16)*
@@ -236,6 +247,15 @@ After init: tell the student to allow `.exit0/e0` to run without confirmation �
 
 <!-- ================================================================= END EXIT ZERO ================================================================= -->
 ```
+
+## Testing the skill, not just the CLI *(added 2026-09-22)*
+
+The maintainer reviews real transcripts (`conversation*.md`, comments in `{ }`). Each comment
+becomes a test at the cheapest level that pins it: `test_skills.py` for skill text, the `e0`
+unit tests for JSON, and `cli/tests/evals/*.json` scenarios run by `test_agent_evals.py`
+against the real coding agent on a cheap model, with a fake `gh` and local content servers.
+A scenario states the repo's issues and PRs, what the student says, and regexes the reply and
+the shell commands must (not) match. Evals run only with `E0_AGENT_EVALS=1`.
 
 ## Changes from Submodule Layout
 

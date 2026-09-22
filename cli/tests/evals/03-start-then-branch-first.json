@@ -1,0 +1,17 @@
+{
+  "from": "tmp.md line 434 and conversation.md line 183: whole task in the issue, clickable file link, preview tip, silent personalization, and the first move is a branch from an updated main that the student creates",
+  "turns": [
+    {
+      "say": "let's start T010",
+      "must_run": ["e0 task T010", "e0 start T010", "gh issue create"],
+      "must_match": ["content/t010/task\\.md", "preview|Ctrl\\+Shift\\+V", "checkout -b", "issues/1"],
+      "must_not_match": ["personaliz", "canonical", "variant"],
+      "must_not_run": ["git checkout", "git commit", "git push", "git add"]
+    },
+    {
+      "say": "thanks",
+      "must_match": ["branch|checkout"],
+      "must_not_run": ["git checkout", "git commit", "git push"]
+    }
+  ]
+}

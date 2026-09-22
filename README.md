@@ -10,6 +10,15 @@ A student starts a software engineering course by forking a course template, the
 cd cli && ../.venv/bin/python -m pytest -v
 ```
 
+Agent evals run the real coding agent (cheapest model) against a fixture course repo and check
+what it says and does. They cost money, so they are opt-in:
+
+```bash
+cd cli && E0_AGENT_EVALS=1 ../.venv/bin/python -m pytest tests/test_agent_evals.py -v
+```
+
+Scenarios live in `cli/tests/evals/`. Each one records the transcript comment it came from.
+
 With coverage:
 
 ```bash
@@ -23,7 +32,7 @@ Bump `E0_VERSION` in `cli/bin/e0` and `RELEASE=` in `cli/skills/learning/referen
 
 ## Where progress lives
 
-In the student's GitHub issues, nowhere else. An open issue titled `[T010] ...` is a task in progress. A closed one is complete. `e0` reads them with `gh`, so the student needs the GitHub CLI installed and logged in. The only local state is `.exit0/state/profile.json`.
+In the student's GitHub issues and pull requests, nowhere else. An open issue titled `[T010] ...` is a task in progress. A closed one is complete. A PR is linked to a task by `[T010]` in its title or the issue number in its body. `e0 status` flags a closed issue with no merged PR, so the agent can say a step was skipped. `e0` reads all this with `gh`, so the student needs the GitHub CLI installed and logged in. The only local state is `.exit0/state/profile.json`.
 
 ## Output shape
 

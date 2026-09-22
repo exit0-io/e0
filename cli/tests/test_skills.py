@@ -64,11 +64,11 @@ def test_learning_skill_has_the_agent_personalize_silently():
     """The spec's personalization contract, done by the agent, never narrated to the student."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "data.canonical" in text
-    assert "personalization.variants" in text
+    assert "data.personalization" in text and "variants" in text
     assert "retone" in text
-    assert "silently" in text.lower()
-    assert "Change nothing else" in text
-    assert text.index("e0 task") < text.index("e0 start <taskId>") < text.index("e0 verify <taskId>")
+    assert "hears nothing about it" in text
+    assert "Every other character stays as it is" in text
+    assert text.index("e0 task <id>") < text.index("e0 start <id>") < text.index("e0 verify <id>")
 
 
 def test_learning_skill_reads_progress_from_github_issues():
@@ -99,9 +99,48 @@ def test_setup_reference_falls_back_to_the_latest_release():
 def test_learning_skill_separates_looking_at_a_task_from_starting_it():
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "e0 task" in text
-    assert text.index("e0 task") < text.index("e0 start <taskId>")
+    assert text.index("e0 task") < text.index("e0 start <id>")
     assert "preview" in text.lower(), "students must be told how to read Markdown"
     assert "](content/" in text, "file links must be clickable"
+
+
+def test_learning_skill_names_the_protocol_and_its_shortcuts():
+    """From conversation.md: the agent must know the road (issue, branch, PR, merge, close,
+    questions) and say so when a closed issue has no merged PR."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "## The protocol" in text
+    for step in ("Issue", "Branch", "Implement", "Pull request", "close the issue", "Comprehension"):
+        assert step in text, f"protocol step missing: {step}"
+    assert "closed_without_pr" in text
+    assert "reopen" in text
+
+
+def test_learning_skill_sends_the_student_to_a_branch_first():
+    """From conversation.md: after handing over the task, the first move is a feature branch
+    from an updated main, run by the student."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "git checkout -b" in text
+    assert "git pull" in text
+    assert "first move" in text
+
+
+def test_learning_skill_links_the_issue_url():
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "issue URL" in text
+
+
+def test_setup_reference_has_no_permission_nag():
+    """From conversation.md: the 'allow e0 to run without asking' note is gone."""
+    text = SETUP_REFERENCE.read_text(encoding="utf-8").lower()
+    assert "without asking" not in text
+    assert "allow" not in text
+
+
+def test_learning_skill_stays_compact():
+    """A stated goal: the skill is as short as it can be. Raise this bound only on purpose."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert len(text.splitlines()) <= 100, "SKILL.md grew; prune before adding"
+    assert len(text) <= 7000
 
 
 def test_release_workflow_publishes_the_pinned_version():

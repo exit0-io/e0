@@ -56,7 +56,7 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
     # 10. The student closes the issue. T010 is complete and T020 is unlocked.
     set_issues(student_repo, [("T010", "CLOSED")])
     payload, _ = run_e0(["status"], student_repo)
-    assert payload["data"]["completed"] == ["T010"]
+    assert [t["id"] for t in payload["data"]["completed"]] == ["T010"]
     assert [t["id"] for t in payload["data"]["next"]] == ["T020"]
 
     # 11. Nothing in .exit0/ leaked into git status.

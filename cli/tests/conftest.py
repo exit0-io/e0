@@ -15,6 +15,7 @@ import pytest
 FIXTURE_COURSE = pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "content"
 FRAMEWORK_SRC = pathlib.Path(__file__).resolve().parents[1]   # cli/
 E0_PATH = FRAMEWORK_SRC / "bin" / "e0"
+ROOT_TEMPLATE = pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "template"
 
 
 def _load_e0():
@@ -34,21 +35,60 @@ _COVERAGE_CFG = str(FRAMEWORK_SRC / "setup.cfg")
 
 
 ISSUES_FILE = ".fake-gh-issues.json"
+PRS_FILE = ".fake-gh-prs.json"
 
-# A stand-in for the GitHub CLI. `gh issue list --json ...` prints the issues found in
-# <cwd>/.fake-gh-issues.json (an empty list if the file is missing). A file holding
-# {"error": "..."} makes it fail the way a logged-out gh would.
+# A stand-in for the GitHub CLI, good enough for e0 and for the agent evals.
+#   gh issue list / gh pr list  -> print the records in <repo>/.fake-gh-issues.json or
+#                                  .fake-gh-prs.json (an empty list if the file is missing)
+#   gh issue create             -> append an OPEN issue and print its URL, like the real one
+#   gh auth status              -> succeed
+# A .fake-gh-issues.json holding {"error": "..."} makes every command fail the way a
+# logged-out gh would. The files live at the git root, so cwd inside the repo is fine.
 FAKE_GH = f"""#!/usr/bin/env python3
-import json, os, sys
-path = os.path.join(os.getcwd(), {ISSUES_FILE!r})
-if not os.path.exists(path):
-    print("[]")
-    sys.exit(0)
-data = json.load(open(path, encoding="utf-8"))
-if isinstance(data, dict) and "error" in data:
-    print(data["error"], file=sys.stderr)
+import json, os, subprocess, sys
+
+def root():
+    try:
+        return subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception:
+        return os.getcwd()
+
+def load(name):
+    path = os.path.join(root(), name)
+    if not os.path.exists(path):
+        return []
+    return json.load(open(path, encoding="utf-8"))
+
+def save(name, data):
+    json.dump(data, open(os.path.join(root(), name), "w", encoding="utf-8"))
+
+issues = load({ISSUES_FILE!r})
+if isinstance(issues, dict) and "error" in issues:
+    print(issues["error"], file=sys.stderr)
     sys.exit(4)
-print(json.dumps(data))
+
+args = sys.argv[1:]
+if args[:2] == ["issue", "list"]:
+    print(json.dumps(issues))
+elif args[:2] == ["pr", "list"]:
+    print(json.dumps(load({PRS_FILE!r})))
+elif args[:2] == ["issue", "create"]:
+    title = body = ""
+    for i, a in enumerate(args):
+        if a in ("--title", "-t"): title = args[i + 1]
+        if a in ("--body", "-b"): body = args[i + 1]
+        if a in ("--body-file", "-F"): body = open(args[i + 1], encoding="utf-8").read()
+    number = max([i.get("number", 0) for i in issues] + [0]) + 1
+    url = f"https://github.com/student/repo/issues/{{number}}"
+    issues.append({{"number": number, "title": title, "state": "OPEN", "url": url, "body": body}})
+    save({ISSUES_FILE!r}, issues)
+    print(url)
+elif args[:2] == ["auth", "status"]:
+    print("Logged in to github.com as student")
+else:
+    print("fake gh: unsupported command: " + " ".join(args), file=sys.stderr)
+    sys.exit(1)
 """
 
 
@@ -82,6 +122,31 @@ def set_issues():
                 }
             records.append(item)
         (pathlib.Path(repo) / ISSUES_FILE).write_text(json.dumps(records), encoding="utf-8")
+
+    return _set
+
+
+@pytest.fixture
+def set_prs():
+    """Write the pull requests the fake gh should report.
+
+    set_prs(repo, [("T010", "MERGED")]) links by title; a dict lets you link by body ("#1").
+    """
+
+    def _set(repo, prs):
+        records = []
+        for index, item in enumerate(prs, start=101):
+            if isinstance(item, tuple):
+                task_id, state = item
+                item = {
+                    "number": index,
+                    "title": f"[{task_id}] my solution",
+                    "state": state,
+                    "url": f"https://github.com/student/repo/pull/{index}",
+                    "body": "",
+                }
+            records.append(item)
+        (pathlib.Path(repo) / PRS_FILE).write_text(json.dumps(records), encoding="utf-8")
 
     return _set
 
@@ -210,7 +275,8 @@ def student_repo(tmp_path, content_server, framework_server):
         ".exit0/state/\n"
         "content/\n"
         "tests/school-checks/\n"
-        f"{ISSUES_FILE}\n",
+        f"{ISSUES_FILE}\n"
+        f"{PRS_FILE}\n",
         encoding="utf-8",
     )
     _git(repo, "init", "-q", "-b", "main")

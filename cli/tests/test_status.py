@@ -27,7 +27,7 @@ def test_progress_comes_from_github_issues(run_e0, initialized, set_issues):
 
     set_issues(initialized, [("T010", "CLOSED")])
     payload, _ = run_e0(["status"], initialized)
-    assert payload["data"]["completed"] == ["T010"]
+    assert [t["id"] for t in payload["data"]["completed"]] == ["T010"]
     assert [task["id"] for task in payload["data"]["next"]] == ["T020"]
 
 
@@ -55,6 +55,52 @@ def test_issues_that_are_not_tasks_are_ignored(run_e0, initialized, set_issues):
     )
     payload, _ = run_e0(["status"], initialized)
     assert [task["id"] for task in payload["data"]["inProgress"]] == ["T010"]
+
+
+def test_status_message_links_the_issue_of_a_task_in_progress(run_e0, initialized, set_issues):
+    """The agent copies the message; the student must be able to click through."""
+    set_issues(initialized, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    assert "https://github.com/student/repo/issues/1" in payload["message"]
+
+
+def test_status_links_pull_requests_to_tasks(run_e0, initialized, set_issues, set_prs):
+    set_issues(initialized, [("T010", "OPEN")])
+    set_prs(initialized, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    pr = payload["data"]["inProgress"][0]["pr"]
+    assert pr["number"] == 101
+    assert pr["state"] == "OPEN"
+    assert pr["merged"] is False
+
+
+def test_a_pr_can_be_linked_by_mentioning_the_issue_number(run_e0, initialized, set_issues, set_prs):
+    set_issues(initialized, [("T010", "CLOSED")])
+    set_prs(
+        initialized,
+        [{"number": 5, "title": "greeting function", "state": "MERGED", "url": "u", "body": "Closes #1"}],
+    )
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["completed"][0]["pr"]["merged"] is True
+    assert payload["data"]["warnings"] == []
+
+
+def test_a_closed_issue_without_a_merged_pr_is_flagged(run_e0, initialized, set_issues, set_prs):
+    """The student may skip the PR. The agent must be told, so it can tell them."""
+    set_issues(initialized, [("T010", "CLOSED")])
+    payload, _ = run_e0(["status"], initialized)
+    kinds = {(w["kind"], w["taskId"]) for w in payload["data"]["warnings"]}
+    assert kinds == {("closed_without_pr", "T010")}
+    assert "reopen" in payload["data"]["warnings"][0]["message"]
+
+    set_prs(initialized, [("T010", "CLOSED")])  # closed, not merged: still flagged
+    payload, _ = run_e0(["status"], initialized)
+    assert len(payload["data"]["warnings"]) == 1
+
+    set_prs(initialized, [("T010", "CLOSED"), ("T010", "MERGED")])
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["warnings"] == []
+    assert payload["data"]["completed"][0]["pr"]["merged"] is True
 
 
 def test_status_without_gh_is_a_problem_with_guidance(run_e0, initialized, gh_unavailable):
