@@ -105,7 +105,7 @@ def require_repo(command):
 
 # Framework skills and the files each one is made of, relative to cli/skills/<name>/.
 FRAMEWORK_SKILLS = {
-    "learning": ["SKILL.md", "references/setup-and-update.md"],
+    "learning": ["SKILL.md", "references/setup-and-update.md", "references/git-branching.md"],
 }
 
 def read_config(root):

@@ -71,15 +71,9 @@ When the student asks to start: `e0 start <id>`. It verifies the file and return
 > git pull
 > git checkout -b <task-branch>
 > ```
->
-> **If this is your first task**, add this context before the commands:
-> 
-> Engineering teams use a tool called **Git** to work on the same codebase together without stepping on each other's toes. Think about it—if two people edit the same file at the same time, they can overwrite each other's work. Git solves this by letting each developer work on their own "branch" of the codebase. When you work on a branch, your changes are separate and safe. When you're ready, you create a pull request to bring your changes back to the main codebase. This way, multiple developers can work on the same project without interfering with each other.
-> 
-> Don't worry if you don't understand all of this yet—we'll go through it together. For now, just run these commands:
->
-> **For other tasks**, use this simpler line:
 > {one line on why: main stays clean, the work goes in a branch and comes back as a pull request}
+
+On the student's first task, replace the branch part with the full explanation in [git-branching.md](references/git-branching.md). Use it again whenever they ask what Git or a branch is, or when you see them skip this step.
 
 `e0 verify <id>` runs the file check on its own.
 
