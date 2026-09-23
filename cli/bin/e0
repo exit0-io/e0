@@ -12,6 +12,7 @@ Envelope: a successful reply is `{"command", "data", "message"}`. A failure is
 `{"command", "problem", "guidance", "message"}`. The presence of `problem` is the signal.
 """
 
+import datetime
 import hashlib
 import json
 import pathlib
@@ -80,6 +81,50 @@ def current_branch(root):
     return out if code == 0 and out else None
 
 
+# `git status --porcelain` codes of a file caught in a merge conflict.
+_UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+
+
+def git_facts(root):
+    """What the working tree looks like, so the agent picks the right Git help without
+    looking. `unpushedCommits` is None when GitHub has no copy of the branch yet."""
+    branch = current_branch(root)
+    uncommitted, conflicts = [], []
+    code, out, _ = run_git(root, "status", "--porcelain", "--untracked-files=all")
+    if code == 0:
+        for line in out.splitlines():
+            if len(line) < 4:
+                continue
+            status, path = line[:2], line[3:]
+            (conflicts if status in _UNMERGED else uncommitted).append(path)
+
+    unpushed = None
+    if branch:
+        code, out, _ = run_git(root, "rev-list", "--count", f"origin/{branch}..{branch}")
+        if code == 0 and out.isdigit():
+            unpushed = int(out)
+
+    return {
+        "branch": branch,
+        "uncommitted": uncommitted,
+        "conflicts": conflicts,
+        "unpushedCommits": unpushed,
+    }
+
+
+def task_for_branch(branch, tasks):
+    """The task a branch name points at: it holds the task id (t010) or the title as a slug
+    (say-hello). None when the name says nothing."""
+    if not branch:
+        return None
+    name = branch.lower()
+    for task in tasks:
+        slug = re.sub(r"[^a-z0-9]+", "-", task["title"].lower()).strip("-")
+        if task["id"].lower() in name or (slug and slug in name):
+            return task["id"]
+    return None
+
+
 def exit0_dir(root):
     return pathlib.Path(root) / ".exit0"
 
@@ -111,7 +156,12 @@ def require_repo(command):
 
 # Framework skills and the files each one is made of, relative to cli/skills/<name>/.
 FRAMEWORK_SKILLS = {
-    "learning": ["SKILL.md", "references/setup-and-update.md", "references/git.md"],
+    "learning": [
+        "SKILL.md",
+        "references/setup-and-update.md",
+        "references/git.md",
+        "assets/checkout.html",
+    ],
 }
 
 def read_config(root):
@@ -311,6 +361,31 @@ def write_profile(root, profile):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "profile.json").write_text(
         json.dumps(profile, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+# A dismissed reminder sleeps this long. Not progress: progress lives in GitHub.
+DISMISS_DAYS = 7
+
+
+def read_dismissed(root, today=None):
+    """{task id: date the reminder wakes up}, expired entries dropped."""
+    path = state_dir(root) / "dismissed.json"
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    today = (today or datetime.date.today()).isoformat()
+    return {task: until for task, until in raw.items() if isinstance(until, str) and until > today}
+
+
+def write_dismissed(root, dismissed):
+    directory = state_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "dismissed.json").write_text(
+        json.dumps(dismissed, indent=2) + "\n", encoding="utf-8"
     )
 
 
@@ -812,19 +887,82 @@ def cmd_status(args):
         if not (task["pr"] and task["pr"]["merged"])
     ]
 
+    # A task started before the tasks it builds on are done. The student may do that too;
+    # the agent says which tasks were skipped, once, until the student asks to drop it.
+    dismissed = read_dismissed(root)
+    for task in in_progress:
+        missing = unmet_dependencies(find_task(catalog, task["id"]), statuses)
+        if missing and task["id"] not in dismissed:
+            warnings.append(
+                {
+                    "kind": "dependency",
+                    "taskId": task["id"],
+                    "missing": missing,
+                    "message": (
+                        f"{task['id']} is in progress but builds on {', '.join(missing)}, "
+                        f"not complete yet. Tell the student, list the unfinished tasks, and "
+                        f"suggest skipping them. If they agree, run 'e0 dismiss {task['id']}' "
+                        f"and the reminder sleeps for {DISMISS_DAYS} days."
+                    ),
+                }
+            )
+
     # Task work belongs on a task branch. A task in progress while `main` is checked out
     # means the branch step was skipped, or not taken yet.
-    branch = current_branch(root)
+    git = git_facts(root)
+    branch = git["branch"]
+    git_reference = ".exit0/skills/learning/references/git.md"
     if in_progress and branch == "main":
+        if git["unpushedCommits"]:
+            state = "committed"
+            hint = (
+                f"There are {git['unpushedCommits']} commit(s) on main that GitHub does not "
+                "have. Follow 'Commits on main' in " + git_reference + ": show the graph, say "
+                "that nobody pushes to main without review and tests, then offer move or drop."
+            )
+        elif git["uncommitted"]:
+            state = "uncommitted"
+            hint = (
+                f"Edited but not committed: {', '.join(git['uncommitted'])}. Name these files. "
+                "Follow 'Uncommitted work on main' in " + git_reference + ": say that nobody "
+                "pushes to main without review and tests, then offer keep or throw away."
+            )
+        else:
+            state = "clean"
+            hint = (
+                "Nothing is edited yet. Read " + git_reference + ", then walk the student to a "
+                "branch, one command per message. The first command is `git checkout main`; "
+                "the rest wait for its result."
+            )
+        if len(in_progress) > 1:
+            hint = (
+                "Several tasks are in progress: first ask which one they work on now, then "
+                + hint[0].lower() + hint[1:]
+            )
         warnings.append(
             {
                 "kind": "on_main",
                 "taskId": in_progress[0]["id"],
+                "state": state,
                 "message": (
-                    f"{in_progress[0]['id']} is in progress and the current branch is main. "
-                    "Task work belongs on a task branch. Read .exit0/skills/learning/references/git.md, "
-                    "then walk the student to one, one command per message. The first command is "
-                    "`git checkout main`; the rest wait for its result."
+                    f"{', '.join(t['id'] for t in in_progress)} "
+                    f"{'is' if len(in_progress) == 1 else 'are'} in progress and the current "
+                    f"branch is main. Task work belongs on a task branch. {hint}"
+                ),
+            }
+        )
+
+    # Several tasks in progress on one branch: only a telling name says which task it is for.
+    branch_task = task_for_branch(branch, in_progress)
+    if len(in_progress) > 1 and branch and branch != "main" and branch_task is None:
+        warnings.append(
+            {
+                "kind": "unclear_branch",
+                "taskId": None,
+                "message": (
+                    f"Several tasks are in progress and the branch name '{branch}' names none "
+                    "of them. Ask which task they work on now. "
+                    "Follow 'Unclear branch' in " + git_reference + "."
                 ),
             }
         )
@@ -855,9 +993,27 @@ def cmd_status(args):
             "completed": completed,
             "warnings": warnings,
             "branch": branch,
+            "branchTask": branch_task,
+            "git": git,
             "update": "unknown",
         },
         message,
+    )
+
+
+def cmd_dismiss(args):
+    """Silence the dependency reminder of a task the student chose to work on out of order."""
+    root, catalog, task, failure = resolve_task("dismiss", args)
+    if failure:
+        return failure
+    until = datetime.date.today() + datetime.timedelta(days=DISMISS_DAYS)
+    dismissed = read_dismissed(root)
+    dismissed[task["id"]] = until.isoformat()
+    write_dismissed(root, dismissed)
+    return reply(
+        "dismiss",
+        {"taskId": task["id"], "until": until.isoformat()},
+        f"The reminder that {task['id']} builds on unfinished tasks is off until {until.isoformat()}.",
     )
 
 
@@ -1272,6 +1428,7 @@ def cmd_help(args):
 COMMANDS = {
     "catalog": cmd_catalog,
     "check": cmd_check,
+    "dismiss": cmd_dismiss,
     "help": cmd_help,
     "init": cmd_init,
     "profile": cmd_profile,

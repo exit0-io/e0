@@ -1,0 +1,13 @@
+{
+  "from": "SKILL.md comments (2026-09-23): several issues open, student on main. Every open issue is listed with its link; the student is told T020 builds on the unfinished T010 and may skip it; they choose a task before any branch command. The reminder is dismissed only if the student agrees.",
+  "issues": [["T010", "OPEN"], ["T020", "OPEN"]],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": ["e0 status"],
+      "must_match": ["https://github\\.com/student/repo/issues/1", "https://github\\.com/student/repo/issues/2", "T010", "which (one|task)|choose|pick"],
+      "must_not_match": ["git checkout -b", "\\be0 \\w+"],
+      "must_not_run": ["e0 dismiss", "git checkout", "e0 start"]
+    }
+  ]
+}

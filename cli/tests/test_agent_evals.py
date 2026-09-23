@@ -16,6 +16,9 @@ E0_AGENT_EVALS_NETWORK=1, because they only pass once the pinned release is publ
 Scenarios with "pinned_release_missing": true bootstrap offline: a fake curl answers 404
 for the pinned release and serves the local e0 as the latest release.
 Scenarios with "downloads_fail": true get a fake curl that answers 404 for every download.
+Scenarios may also shape the working tree: "branch" checks out a new branch, "remote": true
+adds a bare origin with main pushed, "commits" {file: content} commits files on the current
+branch, "uncommitted" {file: content} writes files without committing.
 """
 
 import json
@@ -79,8 +82,22 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin):
         _git(repo, "init", "-q", "-b", "main")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "initial")
+        # The template copy brings its own origin and origin/main along, which would make
+        # e0 count the initial commit as unpushed. A student's remote is the bare repo below.
+        subprocess.run(["git", "remote", "remove", "origin"], cwd=str(repo), capture_output=True)
+        if scenario.get("remote"):
+            remote = tmp_path / "origin.git"
+            _git(tmp_path, "init", "-q", "--bare", str(remote))
+            _git(repo, "remote", "add", "origin", str(remote))
+            _git(repo, "push", "-q", "-u", "origin", "main")
         if scenario.get("branch"):
             _git(repo, "checkout", "-q", "-b", scenario["branch"])
+        for name, content in scenario.get("commits", {}).items():
+            (repo / name).write_text(content, encoding="utf-8")
+            _git(repo, "add", name)
+            _git(repo, "commit", "-q", "-m", f"add {name}")
+        for name, content in scenario.get("uncommitted", {}).items():
+            (repo / name).write_text(content, encoding="utf-8")
 
         if scenario.get("pinned_release_missing") or scenario.get("downloads_fail"):
             curl = fake_gh_bin / "curl"

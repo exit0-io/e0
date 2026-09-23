@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why did git checkout stop?</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d0d7de; --panel: #f6f8fa;
+    --main: #0969da; --feature: #8250df; --edit: #bf8700; --ok: #1a7f37; --bad: #cf222e; --stash: #6e7781;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --panel: #161b22;
+      --main: #4493f8; --feature: #ab7df8; --edit: #d29922; --ok: #3fb950; --bad: #f85149; --stash: #9198a1;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 20px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 20px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em; background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 720px) { .grid { grid-template-columns: 3fr 2fr; } }
+  .panel { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; background: var(--panel); }
+  .panel h2 { font-size: 1rem; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  svg { width: 100%; height: auto; display: block; }
+  .commit { stroke-width: 3; fill: var(--bg); }
+  .lbl { font: 13px ui-monospace, monospace; fill: var(--fg); }
+  .lbl.muted { fill: var(--muted); }
+  .head { font: 600 12px system-ui, sans-serif; fill: var(--bg); }
+  fieldset { border: 0; padding: 0; margin: 0 0 12px; }
+  legend { font-weight: 600; margin-bottom: 6px; }
+  label { display: block; margin: 4px 0; cursor: pointer; }
+  button { font: inherit; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; margin: 4px 6px 4px 0; }
+  button.primary { background: var(--main); border-color: var(--main); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  .out { margin-top: 12px; padding: 12px; border-radius: 6px; border-left: 4px solid var(--line); background: var(--bg); white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .9rem; }
+  .out.ok { border-color: var(--ok); }
+  .out.bad { border-color: var(--bad); }
+  .why { margin-top: 12px; font-size: .95rem; }
+  .file { border: 1px dashed var(--edit); border-radius: 6px; padding: 8px 10px; margin-top: 10px; font-family: ui-monospace, monospace; font-size: .9rem; }
+  .file.clean { border-style: solid; border-color: var(--line); color: var(--muted); }
+  .stash { border: 1px solid var(--stash); border-radius: 6px; padding: 8px 10px; margin-top: 10px; font-family: ui-monospace, monospace; font-size: .9rem; color: var(--muted); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Why did <code>git checkout</code> stop?</h1>
+  <p class="lead">You are on <code id="lead-branch"></code>, you edited <code id="lead-file"></code> without committing, and you want to switch to <code id="lead-target"></code>. Try both cases.</p>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Your repository</h2>
+      <svg id="graph" viewBox="0 0 520 220" role="img" aria-label="Two branches and a working tree"></svg>
+      <div id="worktree" class="file"></div>
+      <div id="stash" class="stash hidden"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Try it</h2>
+      <fieldset>
+        <legend>What is in <code id="fs-file"></code> on <code id="fs-target"></code>?</legend>
+        <label><input type="radio" name="case" value="same" checked> The same as on <span class="b"></span> (you never changed it there)</label>
+        <label><input type="radio" name="case" value="differs"> A different version (it changed on <span class="t"></span>)</label>
+      </fieldset>
+      <button id="checkout" class="primary"></button>
+      <button id="commit"></button>
+      <button id="stash-btn">git stash</button>
+      <button id="reset">Start over</button>
+      <div id="out" class="out hidden"></div>
+      <div id="why" class="why"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const branch = params.get("branch") || "my-feature-branch";
+  const target = params.get("target") || "main";
+  const file = params.get("file") || "app.py";
+
+  const state = { edited: true, committed: false, stashed: false, on: branch, done: false };
+
+  const $ = (id) => document.getElementById(id);
+  document.querySelectorAll(".b").forEach((n) => (n.textContent = branch));
+  document.querySelectorAll(".t").forEach((n) => (n.textContent = target));
+  $("lead-branch").textContent = branch;
+  $("lead-target").textContent = target;
+  $("lead-file").textContent = file;
+  $("fs-file").textContent = file;
+  $("fs-target").textContent = target;
+  $("checkout").textContent = "git checkout " + target;
+  $("commit").textContent = "git commit -m \"...\"";
+
+  const caseOf = () => document.querySelector("input[name=case]:checked").value;
+
+  function circle(x, y, color, label, below) {
+    return `<circle class="commit" cx="${x}" cy="${y}" r="9" stroke="${color}"></circle>` +
+      `<text class="lbl muted" x="${x}" y="${below ? y + 26 : y - 16}" text-anchor="middle">${label}</text>`;
+  }
+  function tag(x, y, color, text) {
+    const w = text.length * 7.5 + 14;
+    return `<rect x="${x - w / 2}" y="${y - 11}" width="${w}" height="22" rx="11" fill="${color}"></rect>` +
+      `<text class="head" x="${x}" y="${y + 4}" text-anchor="middle">${text}</text>`;
+  }
+
+  function draw() {
+    const differs = caseOf() === "differs";
+    const mainColor = "var(--main)", featColor = "var(--feature)";
+    let s = "";
+    // shared history
+    s += `<line x1="60" y1="110" x2="150" y2="110" stroke="var(--line)" stroke-width="3"></line>`;
+    s += circle(60, 110, "var(--muted)", "A", true);
+    // target branch, top
+    s += `<path d="M150 110 C 190 110, 190 60, 240 60 L 330 60" fill="none" stroke="${mainColor}" stroke-width="3"></path>`;
+    s += circle(150, 110, "var(--muted)", "B", true);
+    s += circle(240, 60, mainColor, differs ? file + " changed" : "other work", false);
+    s += tag(400, 60, mainColor, target);
+    // feature branch, bottom
+    const extra = state.committed;
+    s += `<path d="M150 110 C 190 110, 190 160, 240 160 L ${extra ? 330 : 240} 160" fill="none" stroke="${featColor}" stroke-width="3"></path>`;
+    s += circle(240, 160, featColor, "your commit", true);
+    if (extra) s += circle(330, 160, featColor, file, true);
+    s += tag(430, 160, featColor, branch);
+    // HEAD marker
+    const headX = state.on === target ? 400 : 430, headY = state.on === target ? 60 : 160;
+    s += `<text class="lbl" x="${headX}" y="${headY + 32}" text-anchor="middle">you are here</text>`;
+    $("graph").innerHTML = s;
+
+    const wt = $("worktree");
+    if (state.edited && !state.committed && !state.stashed) {
+      wt.className = "file";
+      wt.textContent = "working tree: " + file + " (edited, not committed)";
+    } else {
+      wt.className = "file clean";
+      wt.textContent = "working tree: clean, matches " + state.on;
+    }
+    $("stash").classList.toggle("hidden", !state.stashed);
+    $("stash").textContent = "stash: your edits to " + file + ", set aside";
+
+    $("checkout").disabled = state.done;
+    $("commit").disabled = state.done || state.committed || state.stashed;
+    $("stash-btn").disabled = state.done || state.committed || state.stashed;
+  }
+
+  function say(cls, text, why) {
+    const out = $("out");
+    out.className = "out " + cls;
+    out.textContent = text;
+    $("why").innerHTML = why;
+  }
+
+  $("checkout").addEventListener("click", () => {
+    const blocked = state.edited && !state.committed && !state.stashed && caseOf() === "differs";
+    if (blocked) {
+      say("bad",
+        "error: Your local changes to the following files would be overwritten by checkout:\n\t" + file +
+        "\nPlease commit your changes or stash them before you switch branches.\nAborting",
+        `<p>Switching to <code>${target}</code> means Git rewrites your files to match <code>${target}</code>. ` +
+        `There, <code>${file}</code> is different, so switching would overwrite your uncommitted edits. Git stops to protect them.</p>` +
+        `<p>Two ways out: <strong>commit first</strong> (what we recommend, every change gets a home on <code>${branch}</code>) or <strong>stash</strong>.</p>`);
+      return;
+    }
+    state.on = target;
+    state.done = true;
+    const carried = state.edited && !state.committed && !state.stashed;
+    say("ok", "Switched to branch '" + target + "'" + (carried ? "\nM\t" + file : ""),
+      carried
+        ? `<p>It worked. <code>${file}</code> is the same on both branches, so your edits simply came along. They are still uncommitted, now on <code>${target}</code>.</p>`
+        : `<p>It worked. Your working tree was clean, so there was nothing to overwrite.</p>` +
+          (state.stashed ? `<p>Your edits wait in the stash. <code>git stash pop</code> brings them back.</p>` : ""));
+    draw();
+  });
+
+  $("commit").addEventListener("click", () => {
+    state.committed = true;
+    say("ok", "[" + branch + " 3f2a9c1] " + file + "\n 1 file changed",
+      `<p>Your edits are now a commit on <code>${branch}</code>. The working tree is clean, so nothing can be overwritten. Try the checkout again.</p>`);
+    draw();
+  });
+
+  $("stash-btn").addEventListener("click", () => {
+    state.stashed = true;
+    say("ok", "Saved working directory and index state WIP on " + branch,
+      `<p>Your edits were set aside. The working tree is clean. Try the checkout again. Remember to take them back later with <code>git stash pop</code>.</p>`);
+    draw();
+  });
+
+  $("reset").addEventListener("click", () => {
+    Object.assign(state, { edited: true, committed: false, stashed: false, on: branch, done: false });
+    $("out").className = "out hidden";
+    $("why").innerHTML = "";
+    draw();
+  });
+
+  document.querySelectorAll("input[name=case]").forEach((r) => r.addEventListener("change", draw));
+  draw();
+})();
+</script>
+</body>
+</html>

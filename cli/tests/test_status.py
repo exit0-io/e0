@@ -198,6 +198,143 @@ def test_a_task_in_progress_on_main_is_flagged(run_e0, initialized, set_issues, 
     assert payload["data"]["warnings"] == []
 
 
+def _add_origin(repo, tmp_path, git):
+    remote = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(remote))
+    git(repo, "remote", "add", "origin", str(remote))
+    git(repo, "push", "-q", "-u", "origin", "main")
+
+
+def test_status_reports_the_working_tree(run_e0, initialized, git, tmp_path):
+    """git.md comments (2026-09-23): the agent must know whether files were edited, committed
+    on main, or caught in a conflict, without looking. e0 says."""
+    payload, _ = run_e0(["status"], initialized)
+    facts = payload["data"]["git"]
+    assert facts["branch"] == "main"
+    assert facts["uncommitted"] == [] and facts["conflicts"] == []
+    assert facts["unpushedCommits"] is None, "no origin yet: e0 does not guess"
+
+    _add_origin(initialized, tmp_path, git)
+    (initialized / "greeting.py").write_text("print('hi')\n", encoding="utf-8")
+    payload, _ = run_e0(["status"], initialized)
+    facts = payload["data"]["git"]
+    assert facts["uncommitted"] == ["greeting.py"]
+    assert facts["unpushedCommits"] == 0
+
+    git(initialized, "add", "greeting.py")
+    git(initialized, "commit", "-q", "-m", "greet")
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["git"]["uncommitted"] == []
+    assert payload["data"]["git"]["unpushedCommits"] == 1
+
+
+def test_status_reports_conflicted_files(run_e0, initialized, git):
+    (initialized / "greeting.py").write_text("hello\n", encoding="utf-8")
+    git(initialized, "add", "greeting.py")
+    git(initialized, "commit", "-q", "-m", "hello")
+    git(initialized, "checkout", "-q", "-b", "t010-say-hello", "HEAD~1")
+    (initialized / "greeting.py").write_text("shalom\n", encoding="utf-8")
+    git(initialized, "add", "greeting.py")
+    git(initialized, "commit", "-q", "-m", "shalom")
+    assert _git_merge_fails(initialized)
+
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["git"]["conflicts"] == ["greeting.py"]
+    assert payload["data"]["git"]["uncommitted"] == []
+
+
+def _git_merge_fails(repo):
+    import subprocess
+
+    proc = subprocess.run(["git", "merge", "main"], cwd=str(repo), capture_output=True, text=True)
+    return proc.returncode != 0
+
+
+def test_on_main_warning_names_what_the_student_already_did(
+    run_e0, initialized, set_issues, git, tmp_path
+):
+    """git.md comments (2026-09-23): the fix differs when nothing is edited, when files are
+    edited but not committed, and when commits sit on main that GitHub does not have."""
+    _add_origin(initialized, tmp_path, git)
+    set_issues(initialized, [("T010", "OPEN")])
+
+    def on_main():
+        payload, _ = run_e0(["status"], initialized)
+        return next(w for w in payload["data"]["warnings"] if w["kind"] == "on_main")
+
+    assert on_main()["state"] == "clean"
+
+    (initialized / "greeting.py").write_text("print('hi')\n", encoding="utf-8")
+    warning = on_main()
+    assert warning["state"] == "uncommitted"
+    assert "Uncommitted work on main" in warning["message"]
+
+    git(initialized, "add", "greeting.py")
+    git(initialized, "commit", "-q", "-m", "greet")
+    warning = on_main()
+    assert warning["state"] == "committed"
+    assert "1 commit" in warning["message"] and "Commits on main" in warning["message"]
+
+
+def test_a_task_started_out_of_order_is_flagged_until_dismissed(
+    run_e0, initialized, set_issues, e0mod
+):
+    """SKILL.md comment (2026-09-23): a student who starts from a later task hears which tasks
+    they skipped. If they choose to ignore them, the reminder sleeps for some days."""
+    set_issues(initialized, [("T020", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    warning = next(w for w in payload["data"]["warnings"] if w["kind"] == "dependency")
+    assert warning["taskId"] == "T020" and warning["missing"] == ["T010"]
+    assert "e0 dismiss T020" in warning["message"]
+
+    payload, code = run_e0(["dismiss", "T020"], initialized)
+    assert code == 0 and "problem" not in payload
+    assert payload["data"]["taskId"] == "T020"
+    payload, _ = run_e0(["status"], initialized)
+    assert all(w["kind"] != "dependency" for w in payload["data"]["warnings"])
+
+    import datetime
+
+    later = datetime.date.today() + datetime.timedelta(days=e0mod.DISMISS_DAYS + 1)
+    assert e0mod.read_dismissed(initialized, today=later) == {}, "a dismissal expires"
+    payload, _ = run_e0(["dismiss"], initialized)
+    assert "problem" in payload
+
+
+def test_several_tasks_in_progress_on_main_ask_which_one_first(run_e0, initialized, set_issues):
+    set_issues(initialized, [("T010", "OPEN"), ("T020", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    warning = next(w for w in payload["data"]["warnings"] if w["kind"] == "on_main")
+    assert "T010, T020" in warning["message"]
+    assert "ask which one" in warning["message"]
+
+
+def test_a_branch_that_names_no_task_is_flagged_when_several_are_in_progress(
+    run_e0, initialized, set_issues, git
+):
+    """git.md comment (2026-09-23): 'test123' with two open issues tells nobody which task
+    the work is for. A branch that holds the task id or title is fine."""
+    set_issues(initialized, [("T010", "OPEN"), ("T020", "OPEN")])
+    git(initialized, "checkout", "-q", "-b", "test123")
+    payload, _ = run_e0(["status"], initialized)
+    kinds = {w["kind"] for w in payload["data"]["warnings"]}
+    assert "unclear_branch" in kinds and "on_main" not in kinds
+    assert payload["data"]["branchTask"] is None
+
+    for name, task in (("t020-goodbye", "T020"), ("feature/say-hello", "T010")):
+        git(initialized, "checkout", "-q", "-b", name)
+        payload, _ = run_e0(["status"], initialized)
+        assert payload["data"]["branchTask"] == task
+        assert all(w["kind"] != "unclear_branch" for w in payload["data"]["warnings"])
+
+    set_issues(initialized, [("T010", "OPEN")])
+    git(initialized, "checkout", "-q", "test123")
+    payload, _ = run_e0(["status"], initialized)
+    assert all(w["kind"] != "unclear_branch" for w in payload["data"]["warnings"]), (
+        "one task in progress: the branch can only be for it"
+    )
+
+
 def test_status_never_says_unlock(run_e0, initialized, set_issues):
     """conversation.md: tasks build on each other. This is the industry, not a game."""
     set_issues(initialized, [("T010", "OPEN")])
