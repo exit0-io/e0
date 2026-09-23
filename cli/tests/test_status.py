@@ -1,10 +1,19 @@
+import json
+
 import pytest
+
+from conftest import _git
 
 
 @pytest.fixture
 def initialized(run_e0, student_repo):
     run_e0(["init"], student_repo)
     return student_repo
+
+
+@pytest.fixture
+def git():
+    return _git
 
 
 def test_status_on_a_fresh_course_lists_the_ready_tasks(run_e0, initialized):
@@ -155,6 +164,39 @@ def test_status_before_init_gives_guidance(run_e0, student_repo):
     assert code == 0
     assert "problem" in payload
     assert "init" in payload["guidance"]
+
+
+def test_status_reports_the_current_branch(run_e0, initialized, git):
+    """conversation.md: the agent must know which branch the student is on, to catch work on
+    main and misnamed branches. The fact comes from e0, never inferred."""
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["branch"] == "main"
+
+    git(initialized, "checkout", "-q", "-b", "<task-branch>")
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["branch"] == "<task-branch>"
+
+
+def test_a_task_in_progress_on_main_is_flagged(run_e0, initialized, set_issues, git):
+    """conversation.md: task work belongs on a task branch. Nothing in progress: no warning."""
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["warnings"] == []
+
+    set_issues(initialized, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    kinds = {(w["kind"], w["taskId"]) for w in payload["data"]["warnings"]}
+    assert kinds == {("on_main", "T010")}
+
+    git(initialized, "checkout", "-q", "-b", "t010-say-hello")
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["warnings"] == []
+
+
+def test_status_never_says_unlock(run_e0, initialized, set_issues):
+    """conversation.md: tasks build on each other. This is the industry, not a game."""
+    set_issues(initialized, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    assert "unlock" not in json.dumps(payload).lower()
 
 
 def test_status_when_all_tasks_complete(run_e0, initialized, set_issues):

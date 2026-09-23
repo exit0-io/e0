@@ -4,7 +4,7 @@
     {
       "say": "let's start T010",
       "must_run": ["e0 task T010", "e0 start T010", "gh issue create"],
-      "must_match": ["content/t010/task\\.md", "preview|Ctrl\\+Shift\\+V", "checkout -b", "issues/1"],
+      "must_match": ["content/t010/task\\.md", "preview|Ctrl\\+Shift\\+V", "git checkout main|checkout -b", "issues/1"],
       "must_not_match": ["personaliz", "canonical", "variant"],
       "must_not_run": ["git checkout", "git commit", "git push", "git add"]
     },

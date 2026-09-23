@@ -1,0 +1,13 @@
+{
+  "from": "conversation.md (where am i in the course?): a very common mistake, the student runs `git checkout -b <task-branch>` as is. The agent sees the branch name in e0 status, explains that < > marks a placeholder, and gives the rename command for the student to run",
+  "issues": [["T010", "OPEN"]],
+  "branch": "<task-branch>",
+  "turns": [
+    {
+      "say": "i created the branch, what now?",
+      "must_run": ["e0 status"],
+      "must_match": ["placeholder|<task-branch>", "git branch -m"],
+      "must_not_run": ["git branch -m", "git checkout"]
+    }
+  ]
+}

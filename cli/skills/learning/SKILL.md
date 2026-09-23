@@ -13,7 +13,7 @@ Before your first reply, even to "hi":
 
 1. If `.exit0/e0` is missing, follow [First-time setup](references/setup-and-update.md#first-time-setup).
 2. Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`).
-3. Reply. Orient in a few lines: what is in progress (link the issue URL), what is ready to start, what comes next (mention by task ID; don't link to non-existent issues). Offer to tell more about a task or to start one, then wait for them to ask.
+3. Reply. Orient in a few lines: what is in progress (link the issue URL), what is ready to start, what comes next (by task ID; only issues have links). Tasks build on each other: finishing one makes the next ready. Offer to tell more about a task or to start one, then wait for them to ask.
 
 One message per turn, sent when the commands are done. It says what the result means for the student. The commands you ran, the files you wrote, and the steps in between stay out of it.
 
@@ -38,7 +38,9 @@ Progress lives only in GitHub: the issues and pull requests of the student's rep
 
 A `status.warnings` entry `closed_without_pr` means the student closed an issue with no merged PR. Say it plainly, before any congratulation: the task counts as complete, the usual road has a PR and passing checks, and it is their call to reopen the issue (`gh issue reopen <number>`) or move on.
 
-Later in the course a `dev` branch and environment appear. Students merge feature branches into `dev` without a PR to try things out. `main` is production. When you see work happening on `main`, say so kindly and point back to step 2.
+`status.branch` is the branch the student is on. On their first task, when they ask about Git, or on an `on_main` warning, follow [git.md](references/git.md): one command per message, and catch the common mistakes.
+
+Later in the course a `dev` branch and environment appear. Students merge feature branches into `dev` without a PR to try things out. `main` is production.
 
 ## Tasks
 
@@ -73,7 +75,7 @@ When the student asks to start: `e0 start <id>`. It verifies the file and return
 > ```
 > {one line on why: main stays clean, the work goes in a branch and comes back as a pull request}
 
-On the student's first task, replace the branch part with the full explanation in [git-branching.md](references/git-branching.md). Use it again whenever they ask what Git or a branch is, or when you see them skip this step.
+On the first task, replace the branch part with [git.md](references/git.md).
 
 `e0 verify <id>` runs the file check on its own.
 

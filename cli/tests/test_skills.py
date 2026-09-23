@@ -8,6 +8,7 @@ E0_PATH = ROOT / "cli" / "bin" / "e0"
 # The learning skill is the single entry point. Everything else is a reference inside it.
 EXPECTED = {"learning"}
 SETUP_REFERENCE = SKILLS / "learning" / "references" / "setup-and-update.md"
+GIT_REFERENCE = SKILLS / "learning" / "references" / "git.md"
 
 # Courses hosted by e0. None of these may appear in the CLI or in a framework skill.
 COURSE_NAMES = ("polybot", "yoloservice", "mit2026", "polyaidev", "demo course")
@@ -122,6 +123,36 @@ def test_learning_skill_sends_the_student_to_a_branch_first():
     assert "git checkout -b" in text
     assert "git pull" in text
     assert "first move" in text
+
+
+def test_learning_skill_sends_git_help_to_the_git_reference():
+    """conversation.md: first task, a Git question, or work on main all lead to git.md, and the
+    skill itself stays short."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "references/git.md" in text
+    assert "status.branch" in text
+    assert "on_main" in text
+    assert "first task" in text.lower()
+
+
+def test_git_reference_teaches_one_command_at_a_time():
+    """conversation.md: explain, give one command, let the student run it, check, then the next.
+    The placeholder mistake (a branch literally named <task-branch>) is called out and fixed."""
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    assert "One command per message" in text
+    assert "git --version" in text, "Git may not be installed"
+    assert text.index("git checkout main") < text.index("git pull") < text.index("git checkout -b")
+    assert "placeholder" in text.lower()
+    assert "git branch -m" in text
+    assert "on_main" in text
+    assert "pull request" in text.lower()
+    assert "don't worry" in text.lower()
+
+
+def test_nothing_the_student_reads_says_unlock():
+    """conversation.md: tasks build on each other; 'unlock' makes the course sound like a game."""
+    for path in (E0_PATH, *skill_files()):
+        assert "unlock" not in path.read_text(encoding="utf-8").lower(), f"{path} says unlock"
 
 
 def test_learning_skill_links_the_issue_url():

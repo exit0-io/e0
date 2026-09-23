@@ -74,6 +74,12 @@ def repo_root(start=None):
     return pathlib.Path(out)
 
 
+def current_branch(root):
+    """The checked-out branch name, or None (detached HEAD, no commits, git missing)."""
+    code, out, _ = run_git(root, "branch", "--show-current")
+    return out if code == 0 and out else None
+
+
 def exit0_dir(root):
     return pathlib.Path(root) / ".exit0"
 
@@ -105,7 +111,7 @@ def require_repo(command):
 
 # Framework skills and the files each one is made of, relative to cli/skills/<name>/.
 FRAMEWORK_SKILLS = {
-    "learning": ["SKILL.md", "references/setup-and-update.md", "references/git-branching.md"],
+    "learning": ["SKILL.md", "references/setup-and-update.md", "references/git.md"],
 }
 
 def read_config(root):
@@ -806,6 +812,21 @@ def cmd_status(args):
         if not (task["pr"] and task["pr"]["merged"])
     ]
 
+    # Task work belongs on a task branch. A task in progress while `main` is checked out
+    # means the branch step was skipped, or not taken yet.
+    branch = current_branch(root)
+    if in_progress and branch == "main":
+        warnings.append(
+            {
+                "kind": "on_main",
+                "taskId": in_progress[0]["id"],
+                "message": (
+                    f"{in_progress[0]['id']} is in progress and the current branch is main. "
+                    "Task work belongs on a task branch. Walk the student to one."
+                ),
+            }
+        )
+
     def names(tasks):
         return ", ".join(
             f"{task['id']}: {task['title']}"
@@ -816,7 +837,7 @@ def cmd_status(args):
     if in_progress and ready:
         message = f"You are working on {names(in_progress)}. Also ready to start: {names(ready)}."
     elif in_progress:
-        message = f"You are working on {names(in_progress)}. Finish it to unlock the next tasks."
+        message = f"You are working on {names(in_progress)}. The next tasks build on it."
     elif ready:
         message = f"Nothing in progress. Ready to start: {names(ready)}."
     elif len(completed) == len(catalog.get("tasks", [])):
@@ -831,6 +852,7 @@ def cmd_status(args):
             "next": ready,
             "completed": completed,
             "warnings": warnings,
+            "branch": branch,
             "update": "unknown",
         },
         message,

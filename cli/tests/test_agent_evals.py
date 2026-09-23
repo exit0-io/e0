@@ -62,6 +62,8 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin):
         _git(repo, "init", "-q", "-b", "main")
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "initial")
+        if scenario.get("branch"):
+            _git(repo, "checkout", "-q", "-b", scenario["branch"])
 
         if not scenario.get("bootstrap"):
             shutil.copy(E0_PATH, repo / ".exit0" / "e0")
