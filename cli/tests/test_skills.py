@@ -155,6 +155,8 @@ def test_git_reference_teaches_one_command_at_a_time():
     assert "placeholder" in text.lower()
     assert "git branch -m" in text
     assert "on_main" in text
+    # eval 07: a student who only opened the issue and edited nothing walks the whole road.
+    assert "Nothing edited yet: walk steps 2 to 4" in text
     assert "pull request" in text.lower()
     assert "don't worry" in text.lower()
 
@@ -168,6 +170,32 @@ def test_nothing_the_student_reads_says_unlock():
 def test_learning_skill_links_the_issue_url():
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "issue URL" in text
+
+
+def test_learning_skill_links_only_what_exists():
+    """conversation (2026-09-23): 'T010: Say hello' was a link before the task file existed, so
+    clicking it did nothing. Links go only to files on disk and to issues and PRs by URL."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Link only what exists" in text
+    assert "plain text" in text
+
+
+def test_learning_skill_start_message_keeps_its_paragraphs():
+    """conversation (2026-09-23): the tip and the branch note ran into one block. The template
+    is a literal to copy, blank lines included."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "blank lines included" in text
+    assert "<issue URL>\n\n💡 Tip" in text
+    assert "Markdown preview.\n\nYour first move" in text
+
+
+def test_learning_skill_never_sends_the_student_to_skill_files():
+    """conversation (2026-09-23): the agent told the student to 'go to git.md and follow the
+    steps'. The skill and its references are for the agent; the student never hears of them."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "never link them or send the student to read them" in text
+    assert "replace the branch part with [git.md]" not in text
+    assert "in your own words" in text
 
 
 def test_setup_reference_has_no_permission_nag():

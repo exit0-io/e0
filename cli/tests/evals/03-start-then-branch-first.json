@@ -1,16 +1,17 @@
 {
-  "from": "tmp.md line 434 and conversation.md line 183: whole task in the issue, clickable file link, preview tip, silent personalization, and the first move is a branch from an updated main that the student creates",
+  "from": "tmp.md line 434 and conversation.md line 183: whole task in the issue, clickable file link, preview tip, silent personalization, and the first move is a branch from an updated main that the student creates. conversation (2026-09-23): the tip sits in its own paragraph, and the student is never sent to git.md or any other skill file",
   "turns": [
     {
       "say": "let's start T010",
       "must_run": ["e0 task T010", "e0 start T010", "gh issue create"],
-      "must_match": ["content/t010/task\\.md", "preview|Ctrl\\+Shift\\+V", "git checkout main|checkout -b", "issues/1"],
-      "must_not_match": ["personaliz", "canonical", "variant"],
+      "must_match": ["content/t010/task\\.md", "preview|Ctrl\\+Shift\\+V", "git checkout main|checkout -b", "issues/1", "\\n\\s*\\n[^\\n]*Tip[^\\n]*\\n\\s*\\n"],
+      "must_not_match": ["personaliz", "canonical", "variant", "git\\.md", "\\.exit0/skills", "SKILL\\.md", "setup-and-update"],
       "must_not_run": ["git checkout", "git commit", "git push", "git add"]
     },
     {
       "say": "thanks",
-      "must_match": ["branch|checkout"],
+      "must_match": ["branch|checkout|command"],
+      "must_not_match": ["git\\.md", "\\.exit0/skills"],
       "must_not_run": ["git checkout", "git commit", "git push"]
     }
   ]

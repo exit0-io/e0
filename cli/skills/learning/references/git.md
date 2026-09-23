@@ -55,7 +55,7 @@ Then walk these steps, one message each:
   ```bash
   git branch -m <task-branch>
   ```
-- **Work on `main`** (`on_main` warning). If nothing is committed yet, creating the branch now carries the changes with it: step 4. If commits already landed on `main`, help them move the commits to a new branch, then bring `main` back to what GitHub has:
+- **Work on `main`** (`on_main` warning). Nothing edited yet: walk steps 2 to 4 as usual, one at a time. Files edited but nothing committed: step 4 alone, the branch carries the changes with it. Commits already on `main`: help them move the commits to a new branch, then bring `main` back to what GitHub has:
   ```bash
   git branch <task-branch>
   git reset --keep origin/main
