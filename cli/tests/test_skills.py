@@ -161,6 +161,77 @@ def test_git_reference_teaches_one_command_at_a_time():
     assert "don't worry" in text.lower()
 
 
+def _git_reference_opening():
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    return text[text.index("Open with this") : text.index("Then walk these steps")]
+
+
+def test_git_reference_opening_says_merge_not_pull_request():
+    """conversation (2026-09-23, 'i want to start'): no pull request this early. The opening says
+    you merge your feature branch into main, and the mechanism comes later."""
+    opening = _git_reference_opening()
+    assert "pull request" not in opening.lower()
+    assert "**merge**" in opening
+    assert "**feature branch**" in opening and "**main branch**" in opening
+    assert "later" in opening
+
+
+def test_git_reference_explains_production_with_a_real_example():
+    """conversation (2026-09-23): 'the version your users are using' confuses a student whose
+    project runs nowhere yet. Production is the environment where the real product runs."""
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    assert "**production**" in text
+    assert "Production is the environment" in text
+    assert "facebook.com" in text
+    assert "your users are using" not in text
+
+
+def test_git_pull_is_explicit_and_explains_origin():
+    """conversation (2026-09-23): `git pull` alone, with 'brings in anything that changed there',
+    taught nothing. The command names the remote and the branch, origin gets explained, and
+    a lone student hears why the command changed nothing."""
+    skill = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    git = GIT_REFERENCE.read_text(encoding="utf-8")
+    for text in (skill, git):
+        assert "git pull origin main" in text
+        assert not re.search(r"git pull(?! origin main)", text), "every pull names origin and main"
+    assert "**origin**" in git
+    assert "colleagues" in git
+    assert "only developer" in git and ";-)" in git
+
+
+def test_git_reference_lets_the_student_name_the_branch_first():
+    """conversation (2026-09-23): the naming rules and the bracket warning came before the student
+    typed anything, and the command arrived already filled in. Send `git checkout -b <task-branch>`
+    as is, say what to put there, and keep the rules for after they ran it."""
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    command = text.index("git checkout -b <task-branch>")
+    assert "brackets included" not in text
+    assert "replace `<task-branch>` with a meaningful name" in text
+    assert text.index("lowercase") > command, "naming rules come after the command"
+    assert text.index("t010-say-hello") > text.index("## Mistakes to catch"), "example names live with the fixes"
+    assert "No example name, no naming rules" in text
+    assert "Let the student try" in text
+    assert text.index(";-)") > text.index("git pull origin main"), "the wink comes after the pull ran"
+
+
+def test_learning_skill_links_its_references_from_the_repo_root():
+    """eval 12 (2026-09-23): the agent reads SKILL.md as a plain file from the repo root, and haiku
+    looked for `references/git.md` under `.exit0/`, gave up, and taught from the start template.
+    Every link to a reference names the full path."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "](references/" not in text
+    assert "](.exit0/skills/learning/references/git.md)" in text
+    assert "](.exit0/skills/learning/references/setup-and-update.md" in text
+    assert ".exit0/skills/learning/references/git.md" in E0_PATH.read_text(encoding="utf-8")
+
+
+def test_learning_skill_bolds_new_terms():
+    """conversation (2026-09-23): always bold a new term the first time (Git, origin, merge...)."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Bold every new term" in text
+
+
 def test_nothing_the_student_reads_says_unlock():
     """conversation.md: tasks build on each other; 'unlock' makes the course sound like a game."""
     for path in (E0_PATH, *skill_files()):

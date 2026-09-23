@@ -186,6 +186,12 @@ def test_a_task_in_progress_on_main_is_flagged(run_e0, initialized, set_issues, 
     payload, _ = run_e0(["status"], initialized)
     kinds = {(w["kind"], w["taskId"]) for w in payload["data"]["warnings"]}
     assert kinds == {("on_main", "T010")}
+    # evals 07 and 12: a cheap model pasted all three branch commands at once. The warning
+    # carries the first command and the pace, so there is nothing to infer.
+    message = payload["data"]["warnings"][0]["message"]
+    assert "git checkout main" in message
+    assert "one command per message" in message
+    assert ".exit0/skills/learning/references/git.md" in message
 
     git(initialized, "checkout", "-q", "-b", "t010-say-hello")
     payload, _ = run_e0(["status"], initialized)

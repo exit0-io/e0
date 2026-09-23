@@ -822,7 +822,9 @@ def cmd_status(args):
                 "taskId": in_progress[0]["id"],
                 "message": (
                     f"{in_progress[0]['id']} is in progress and the current branch is main. "
-                    "Task work belongs on a task branch. Walk the student to one."
+                    "Task work belongs on a task branch. Read .exit0/skills/learning/references/git.md, "
+                    "then walk the student to one, one command per message. The first command is "
+                    "`git checkout main`; the rest wait for its result."
                 ),
             }
         )

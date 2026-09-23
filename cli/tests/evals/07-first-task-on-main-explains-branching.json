@@ -5,7 +5,7 @@
     {
       "say": "where am i in the course?",
       "must_run": ["e0 status"],
-      "must_match": ["https://github\\.com/student/repo/issues/1", "main", "branch", "git checkout main"],
+      "must_match": ["https://github\\.com/student/repo/issues/1", "main", "branch", "git --version|git checkout main"],
       "must_not_match": ["unlock", "git checkout -b", "git\\.md", "\\.exit0/skills", "SKILL\\.md"],
       "must_not_run": ["git checkout", "git branch", "e0 start"]
     }
