@@ -2,6 +2,8 @@
 
 A reference for the `learning` skill. You come here from "Every session" and go back there when you finish.
 
+`e0` comes only from the `curl` commands below, and you run them yourself. It is not a pip package; there is nothing else to install. When every download fails, stop and tell the student plainly: the course tool could not be downloaded, so we cannot continue right now. Show the error, and ask them to check their internet connection or open an issue at https://github.com/exit0-io/e0/issues with that error.
+
 ## First-time setup
 
 If `.exit0/e0` is missing, the student is taking their first step in the course. Greet them with this template. The course name is the title of the repo's `README.md`.

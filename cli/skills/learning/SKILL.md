@@ -11,7 +11,7 @@ The user is a student taking a software engineering course in this repo. The cou
 
 Before your first reply, even to "hi":
 
-1. If `.exit0/e0` is missing, follow [First-time setup](references/setup-and-update.md#first-time-setup).
+1. If `.exit0/e0` is missing, get it only by following [First-time setup](references/setup-and-update.md#first-time-setup).
 2. Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`).
 3. Reply. Orient in a few lines: what is in progress (link the issue URL), what is ready to start, what comes next (by task ID; only issues have links). Tasks build on each other: finishing one makes the next ready. Offer to tell more about a task or to start one, then wait for them to ask.
 

@@ -13,6 +13,9 @@ Run them on purpose:
 
 Scenarios with "bootstrap": true download e0 from GitHub. They also need
 E0_AGENT_EVALS_NETWORK=1, because they only pass once the pinned release is published.
+Scenarios with "pinned_release_missing": true bootstrap offline: a fake curl answers 404
+for the pinned release and serves the local e0 as the latest release.
+Scenarios with "downloads_fail": true get a fake curl that answers 404 for every download.
 """
 
 import json
@@ -33,6 +36,20 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("E0_AGENT_EVALS") != "1",
     reason="agent evals run the real coding agent; set E0_AGENT_EVALS=1",
 )
+
+
+FAKE_CURL = f"""#!/usr/bin/env python3
+import shutil, sys
+SERVE_LATEST = {{serve_latest}}
+args = sys.argv[1:]
+url = next((a for a in args if a.startswith("http")), "")
+out = args[args.index("-o") + 1] if "-o" in args else None
+if SERVE_LATEST and "/releases/latest/download/e0" in url and out:
+    shutil.copy({str(E0_PATH)!r}, out)
+    sys.exit(0)
+print("curl: (22) The requested URL returned error: 404", file=sys.stderr)
+sys.exit(22)
+"""
 
 
 def _scenario_id(path):
@@ -65,7 +82,12 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin):
         if scenario.get("branch"):
             _git(repo, "checkout", "-q", "-b", scenario["branch"])
 
-        if not scenario.get("bootstrap"):
+        if scenario.get("pinned_release_missing") or scenario.get("downloads_fail"):
+            curl = fake_gh_bin / "curl"
+            serve_latest = not scenario.get("downloads_fail")
+            curl.write_text(FAKE_CURL.format(serve_latest=serve_latest), encoding="utf-8")
+            curl.chmod(0o755)
+        elif not scenario.get("bootstrap"):
             shutil.copy(E0_PATH, repo / ".exit0" / "e0")
             (repo / ".exit0" / "e0").chmod(0o755)
             subprocess.run([str(repo / ".exit0" / "e0"), "init"], cwd=repo, check=True, capture_output=True)

@@ -97,6 +97,16 @@ def test_setup_reference_falls_back_to_the_latest_release():
     assert text.count("releases/latest/download/e0") >= 2, "bash and PowerShell both need it"
 
 
+def test_setup_reference_names_curl_as_the_only_source_and_the_way_out():
+    """A cheap model once told the student to `pip install exit0`. There is no such package."""
+    text = SETUP_REFERENCE.read_text(encoding="utf-8")
+    assert "comes only from the `curl` commands" in text
+    assert "not a pip package" in text
+    assert "https://github.com/exit0-io/e0/issues" in text
+    skill = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "get it only by following [First-time setup]" in skill
+
+
 def test_learning_skill_separates_looking_at_a_task_from_starting_it():
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "e0 task" in text
