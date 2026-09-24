@@ -1,33 +1,12 @@
 # Git
 
-A reference for the `learning` skill. Come here when:
-
-- the student is on their first task (`status.completed` is empty),
-- the student asks for help with Git, `main`, branches, commits, merges, or pull requests,
-- a row of the table below matches `status.git`,
-- the student pastes a Git error.
-
-Otherwise the branch note in the skill's start template is enough.
+The exact words for each Git situation. The table in the `learning` skill maps `status.git` to a section here.
 
 ## How to teach Git here
 
 The templates below are what you send. Stick to them as closely as you can: the templates are the lesson. `{braces}` are for you to fill in.
 
 Where a section walks numbered steps, send one step per message and wait for the student to run it before the next. "ok" or "done" is enough: trust them and move on. Ask for the output only when you think they are stuck and the output would tell you why.
-
-## Which scenario
-
-Pick the first row that matches `e0 status`, and go to its section. `git` is `status.git`. A task is in progress when `status.inProgress` is not empty.
-
-| What you see | Section |
-|---|---|
-| `e0 status` cannot find a git repository, or the student says `git` is not found | [Git is missing](#git-is-missing) |
-| `git.conflicts` is not empty | [Merge conflict](#merge-conflict) |
-| you opened the first issue in this conversation, or the student asks to understand Git or branches better | [The branch, step by step](#the-branch-step-by-step) |
-| `git.branch` is `main` and a task is in progress | [On main with a task open](#on-main-with-a-task-open) |
-| several tasks are in progress and `git.task` is null | [Unclear branch](#unclear-branch) |
-| `git.branch` has `<` or `>`, or a name that says nothing about the task | [Branch naming issues](#branch-naming-issues) |
-| the student pastes `would be overwritten by checkout` (`e0` cannot see an aborted checkout: Git leaves no trace of it. The pasted error is the signal.) | [Checkout aborted](#checkout-aborted) |
 
 ## Git is missing
 

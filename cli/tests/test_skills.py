@@ -141,14 +141,26 @@ def test_learning_skill_sends_the_student_to_a_branch_first():
 
 def test_learning_skill_sends_git_help_to_the_git_reference():
     """conversation.md: first task, a Git question, or work on main all lead to git.md, and the
-    skill itself stays short. conversation (2026-09-24): the facts are status.git, and git.md's
-    table, not a warning, says what they mean."""
+    skill itself stays short. conversation (2026-09-24): the facts are status.git, and a table,
+    not a warning, says what they mean. Git runs through every task, so the table sits in
+    SKILL.md and each row links the full instructions in git.md."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "references/git.md" in text
     assert "status.git" in text
-    assert "table" in text
+    assert "| What you see |" in text
     assert "first task" in text.lower()
     assert "on_main" not in text and "unclear_branch" not in text and "status.branch" not in text
+
+
+def test_learning_skill_says_the_first_task_exception_before_the_start_template():
+    """conversation (2026-09-24): haiku copied the literal branch block of the start template on
+    the first task, because the exception came after it. The exception, keyed on e0's
+    data.firstTask, now comes before the template."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    exception = text.index("`data.firstTask`")
+    assert exception < text.index("Your first move is a branch")
+    assert "git.md#the-branch-step-by-step" in text[exception:exception + 200]
+    assert "data.firstTask" in _skill_git_table()
 
 
 def test_git_reference_teaches_one_step_at_a_time_without_nagging():
@@ -183,6 +195,12 @@ def test_git_reference_is_templates_not_hints():
 
 def _section(text, title):
     return text.split(f"## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _skill_git_table():
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    start = text.index("| What you see |")
+    return text[start : text.index("\n\n", start)]
 
 
 def _git_reference_opening():
@@ -277,7 +295,8 @@ def test_learning_skill_reads_the_working_tree_from_status_git():
 def test_git_reference_has_a_template_for_every_scenario():
     """git.md comments (2026-09-23): 'write here the exact format for ALL scenarios so the
     coding agent and haiku will not guess'. Every section the table points at exists, and
-    each holds a quoted template."""
+    each holds a quoted template. conversation (2026-09-24): the table lives in SKILL.md,
+    Git being part of every task, and each row links its git.md section."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
     sections = {
         "Git is missing",
@@ -288,8 +307,10 @@ def test_git_reference_has_a_template_for_every_scenario():
         "Checkout aborted",
         "Merge conflict",
     }
-    linked = set(re.findall(r"\| \[([^\]]+)\]\(#[a-z-]+\) \|", text))
+    table = _skill_git_table()
+    linked = set(re.findall(r"\| \[([^\]]+)\]\(\.exit0/skills/learning/references/git\.md#[a-z-]+\) \|", table))
     assert linked == sections
+    assert "Which scenario" not in text, "one table, in SKILL.md"
     for section in sections:
         assert re.search(rf"^## {re.escape(section)}$", text, re.MULTILINE), f"no section {section}"
         assert "\n> " in _section(text, section), f"{section} has no template"
@@ -300,7 +321,7 @@ def test_git_reference_table_reads_status_git_only():
     """conversation (2026-09-24): the on_main and unclear_branch warnings duplicated status.git
     and git.md. The table keys on the git facts alone; e0 sends no procedure."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    table = _section(text, "Which scenario")
+    table = _skill_git_table()
     for gone in ("on_main", "unclear_branch", "warnings", "status.branch", "branchTask"):
         assert gone not in text, f"git.md still says {gone}"
     assert "`git.branch` is `main` and a task is in progress" in table
@@ -333,7 +354,7 @@ def test_git_reference_step_by_step_is_for_the_first_issue_or_a_curious_student(
     assert "1. **Switch to `main`.**" in walk and "3. **Create the task branch.**" in walk
     assert "you are probably on it already" in walk
     assert "Can you tell why?" in walk
-    table = _section(text, "Which scenario")
+    table = _skill_git_table()
     assert table.index("step by step") < table.index("On main with a task open"), (
         "the first issue just opened wins over the on-main reminder"
     )
@@ -398,7 +419,7 @@ def test_git_reference_explains_an_aborted_checkout_and_offers_the_simulator():
     assert "**Commit first**" in section and "**Stash**" in section
     assert "This is what we recommend" in section
     assert "http.server" in section and "checkout.html?branch={branch}&target={target}&file={file}" in section
-    assert "cannot see an aborted checkout" in text, "e0 does not know; the pasted error does"
+    assert "cannot see an aborted checkout" in _skill_git_table(), "e0 does not know; the pasted error does"
 
 
 def test_checkout_simulator_exists_and_takes_the_students_names():
@@ -508,9 +529,11 @@ def test_setup_reference_has_no_permission_nag():
 def test_learning_skill_stays_compact():
     """A stated goal: the skill is as short as it can be. Raise this bound only on purpose."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
-    assert len(text.splitlines()) <= 100, "SKILL.md grew; prune before adding"
-    # Raised from 7000 on 2026-09-24 for the first-time-term rule and the orientation rules.
-    assert len(text) <= 7100
+    # Both bounds raised on 2026-09-24 when the Git table moved here from git.md.
+    assert len(text.splitlines()) <= 110, "SKILL.md grew; prune before adding"
+    # Raised from 7000 on 2026-09-24 for the first-time-term rule and the orientation rules,
+    # then to 8300 the same day for the Git table.
+    assert len(text) <= 8300
 
 
 def test_release_workflow_publishes_the_pinned_version():

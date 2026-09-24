@@ -142,6 +142,26 @@ def test_start_emits_an_issue_whose_body_is_the_whole_personalized_task(
     assert "standard library" in issue["body"]
 
 
+def test_start_on_the_first_task_points_at_the_branch_walk(
+    run_e0, initialized, write_task_file, set_issues
+):
+    """conversation (2026-09-24): after the first issue the agent sent the start template's three
+    branch commands, not git.md's step-by-step walk. It never read git.md: the only signal was a
+    line after the literal template. e0 says it is the first task and where the walk lives."""
+    write_task_file(initialized, "T010")
+    payload, _ = run_e0(["start", "T010"], initialized)
+    assert payload["data"]["firstTask"] is True
+    assert ".exit0/skills/learning/references/git.md" in payload["message"]
+    assert "The branch, step by step" in payload["message"]
+    assert "git checkout main" in payload["message"]
+
+    write_task_file(initialized, "T020")
+    set_issues(initialized, [("T010", "CLOSED")])
+    payload, _ = run_e0(["start", "T020"], initialized)
+    assert payload["data"]["firstTask"] is False
+    assert "git.md" not in payload["message"]
+
+
 def test_start_stores_nothing_locally(run_e0, initialized, write_task_file):
     """The open issue is the record. e0 keeps no progress of its own."""
     write_task_file(initialized, "T010")
