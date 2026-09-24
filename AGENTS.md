@@ -20,14 +20,18 @@ in curly braces: `{ the agent should have linked the issue here }`. When you are
 on such a file:
 
 1. Read every `{ comment }` and the text around it.
-2. Fix what it points at: the skill, `e0`, the course content, the template, or the docs.
-3. Turn the comment into a test, at the cheapest level that pins the behaviour:
+2. Find the root cause before you fix anything. Use the `systematic-debugging` skill from
+   superpowers: trace what the agent read and ran, find why it did what it did, and check the
+   git history for the change that caused it. A line of text added to satisfy the comment is
+   not a fix unless it removes the cause.
+3. Fix what the cause points at: the skill, `e0`, the course content, the template, or the docs.
+4. Turn the comment into a test, at the cheapest level that pins the behaviour:
    - `cli/tests/test_skills.py` for what the skill text must say (fast, always runs);
    - the `e0` unit tests for what the JSON must contain;
    - `cli/tests/evals/*.json` for how the agent must behave, run by `test_agent_evals.py`
      against the real coding agent on a cheap model. Each scenario records which comment it
      came from in its `from` field.
-4. Say which comments you could not turn into a test, and why.
+5. Say which comments you could not turn into a test, and why.
 
 ## Language and style
 

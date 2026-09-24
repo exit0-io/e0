@@ -39,7 +39,17 @@ Each warning (`status.warnings`, `e0 start`) has a `kind`. Say it plainly, befor
 - `closed_without_pr`: the student closed an issue with no merged PR. It counts as complete; the usual road has a PR and passing checks. Their call: reopen the issue (`gh issue reopen <number>`) or move on.
 - `dependency`: the task builds on unfinished tasks (`missing`). List them, suggest skipping them for now. If the student agrees, run `e0 dismiss <id>`: the reminder sleeps a week.
 
-`status.git` says where the student stands in Git: `branch`, `task` (the task the branch name points at), `uncommitted`, `conflicts`, `unpushedCommits`, `mergingFrom`. The table in [git.md](.exit0/skills/learning/references/git.md) maps these facts to what you say. Read it when a row matches, on the first task, and when the student asks about Git or pastes a Git error.
+`status.git` says where the student stands in Git: `branch`, `task` (the task the branch name points at), `uncommitted`, `conflicts`, `unpushedCommits`, `mergingFrom`. Pick the first row that matches; its section of [git.md](.exit0/skills/learning/references/git.md) holds the exact words to send. A task is in progress when `status.inProgress` is not empty.
+
+| What you see | Send |
+|---|---|
+| `e0 status` cannot find a git repository, or the student says `git` is not found | [Git is missing](.exit0/skills/learning/references/git.md#git-is-missing) |
+| `git.conflicts` is not empty | [Merge conflict](.exit0/skills/learning/references/git.md#merge-conflict) |
+| `e0 start` returned `data.firstTask` true in this conversation, or the student asks to understand Git or branches better | [The branch, step by step](.exit0/skills/learning/references/git.md#the-branch-step-by-step) |
+| `git.branch` is `main` and a task is in progress | [On main with a task open](.exit0/skills/learning/references/git.md#on-main-with-a-task-open) |
+| several tasks are in progress and `git.task` is null | [Unclear branch](.exit0/skills/learning/references/git.md#unclear-branch) |
+| `git.branch` has `<` or `>`, or a name that says nothing about the task | [Branch naming issues](.exit0/skills/learning/references/git.md#branch-naming-issues) |
+| the student pastes `would be overwritten by checkout` (`e0` cannot see an aborted checkout: Git leaves no trace of it; the pasted error is the signal) | [Checkout aborted](.exit0/skills/learning/references/git.md#checkout-aborted) |
 
 ## Tasks
 
@@ -58,7 +68,7 @@ Right after `e0 task`, write `content/<id>/task.md` from `canonical`:
 
 This is plumbing: write the file and move on. The student hears nothing about it, not even between commands.
 
-When the student asks to start: `e0 start <id>`. It verifies the file (`e0 verify <id>` does that alone) and returns `data.issue`; fix any violation from `canonical`. Open the issue with `title` and `body` exactly as given (the body is the whole task). Then send this, filled in, blank lines included:
+When the student asks to start: `e0 start <id>`. It verifies the file (`e0 verify <id>` does that alone) and returns `data.issue`; fix any violation from `canonical`. Open the issue with `title` and `body` exactly as given (the body is the whole task). Then send this, filled in, blank lines included. On the first task (`data.firstTask`), its branch part is instead the opening and step 1 of [The branch, step by step](.exit0/skills/learning/references/git.md#the-branch-step-by-step).
 
 ````markdown
 Your task is ready: [task.md](content/<id>/task.md). The GitHub issue for it: <issue URL>
@@ -73,8 +83,6 @@ git checkout -b <task-branch>
 ```
 {one line on why: main stays clean, the work goes in a branch and comes back as a pull request}
 ````
-
-On the first task, the branch part becomes the step-by-step walk of [git.md](.exit0/skills/learning/references/git.md): its opening and its first command.
 
 ## Helping
 

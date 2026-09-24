@@ -1183,17 +1183,32 @@ def cmd_start(args):
     if warning:
         warnings.append(warning)
 
+    # A literal three-command block in the skill's start template beats a rule in another file
+    # for a cheap model, so the first task's pointer to git.md comes from e0 itself.
+    first_task = not progress
+    message = (
+        f"{task_id} is ready. Open a GitHub issue with data.issue (title and body exactly as "
+        f"given). The open issue is what marks {task_id} as in progress."
+    )
+    if first_task:
+        message += (
+            " This is the student's first task: in your message, replace the branch part of the "
+            "start template with the opening and step 1 of 'The branch, step by step' in "
+            ".exit0/skills/learning/references/git.md. Step 1 is only `git checkout main`; "
+            "the other commands wait for the student."
+        )
+
     return reply(
         "start",
         {
             "taskId": task_id,
             "task": task,
             "paths": task_paths(task_id),
+            "firstTask": first_task,
             "warnings": warnings,
             "issue": {"title": f"[{task_id}] {task['title']}", "body": personalized_text},
         },
-        f"{task_id} is ready. Open a GitHub issue with data.issue (title and body exactly as "
-        f"given). The open issue is what marks {task_id} as in progress.",
+        message,
     )
 
 
