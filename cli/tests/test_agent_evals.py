@@ -18,7 +18,8 @@ for the pinned release and serves the local e0 as the latest release.
 Scenarios with "downloads_fail": true get a fake curl that answers 404 for every download.
 Scenarios may also shape the working tree: "branch" checks out a new branch, "remote": true
 adds a bare origin with main pushed, "commits" {file: content} commits files on the current
-branch, "uncommitted" {file: content} writes files without committing.
+branch, "uncommitted" {file: content} writes files without committing, "conflict"
+{branch, file} leaves a merge of main into that branch stopped on that file.
 """
 
 import json
@@ -98,6 +99,17 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin):
             _git(repo, "commit", "-q", "-m", f"add {name}")
         for name, content in scenario.get("uncommitted", {}).items():
             (repo / name).write_text(content, encoding="utf-8")
+        if scenario.get("conflict"):
+            # The same line changed on main and on the task branch; `git merge main` stops.
+            name = scenario["conflict"]["file"]
+            (repo / name).write_text("def greet(name):\n    return 'Hello, ' + name\n", encoding="utf-8")
+            _git(repo, "add", name)
+            _git(repo, "commit", "-q", "-m", f"{name} on main")
+            _git(repo, "checkout", "-q", "-b", scenario["conflict"]["branch"], "HEAD~1")
+            (repo / name).write_text("def greet(name):\n    return f'Hi, {name}!'\n", encoding="utf-8")
+            _git(repo, "add", name)
+            _git(repo, "commit", "-q", "-m", f"{name} on the task branch")
+            subprocess.run(["git", "merge", "main"], cwd=str(repo), capture_output=True)
 
         if scenario.get("pinned_release_missing") or scenario.get("downloads_fail"):
             curl = fake_gh_bin / "curl"

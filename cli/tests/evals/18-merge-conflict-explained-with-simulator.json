@@ -1,0 +1,14 @@
+{
+  "from": "git.md comments (2026-09-23, 2026-09-24): status.git.conflicts is not empty, so the agent says it first even though the student asked something else: a merge conflict in greeting.py between the student's two branches (status.git.branch and status.git.mergingFrom), the markers, the VS Code merge editor, then git add and a commit. It serves the conflict simulator from the skill's assets and links it. It runs no git command that changes the repo.",
+  "issues": [["T010", "OPEN"]],
+  "conflict": {"branch": "t010-say-hello", "file": "greeting.py"},
+  "turns": [
+    {
+      "say": "hi, what should i do next?",
+      "must_run": ["e0 status", "http\\.server"],
+      "must_match": ["merge conflict", "greeting\\.py", "t010-say-hello", "main", "<<<<<<<|Merge Editor", "localhost:\\d+/conflict\\.html"],
+      "must_not_match": ["git\\.md", "\\.exit0/skills", "mergingFrom"],
+      "must_not_run": ["git add", "git commit", "git merge", "git checkout", "git reset"]
+    }
+  ]
+}
