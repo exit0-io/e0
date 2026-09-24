@@ -1,0 +1,31 @@
+{
+  "from": "conversation: agent told the student to `pip install exit0`; get e0 only by the skill's curl, else say so and point to exit0-io/e0 issues",
+  "downloads_fail": true,
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "raw\\.githubusercontent\\.com/exit0-io/e0/",
+        "github\\.com/exit0-io/e0/releases/latest/download/e0"
+      ],
+      "must_match": [
+        "github\\.com/exit0-io/e0/issues"
+      ],
+      "must_not_match": [
+        "pip3? install",
+        "pipx",
+        "brew install",
+        "npm install",
+        "install exit0"
+      ],
+      "must_not_run": [
+        "\\bpip3?\\b",
+        "\\bpipx\\b",
+        "\\bbrew\\b",
+        "\\bnpm\\b",
+        "uv tool",
+        "api\\.github\\.com"
+      ]
+    }
+  ]
+}

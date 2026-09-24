@@ -1,0 +1,14 @@
+{
+  "from": "git.md comment (2026-09-23): several issues open and the student is on 'test123'. The agent names the branch, says it cannot tell which task it is for, asks which task they work on, and suggests a name that says the task. It runs no git command itself.",
+  "issues": [["T010", "OPEN"], ["T020", "OPEN"]],
+  "branch": "test123",
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": ["e0 status"],
+      "must_match": ["test123", "which (one|task)|choose|pick", "name"],
+      "must_not_match": ["\\be0 \\w+"],
+      "must_not_run": ["git checkout", "git branch", "e0 start"]
+    }
+  ]
+}

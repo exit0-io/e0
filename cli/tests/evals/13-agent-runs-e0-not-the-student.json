@@ -1,0 +1,13 @@
+{
+  "from": "conversation (2026-09-23, 'am i ready to start?'): the agent told the student 'run e0 check to verify it works'. The student never runs e0; the agent runs it and says what it means. No e0 command reaches the student.",
+  "issues": [["T010", "OPEN"]],
+  "branch": "t010-say-hello",
+  "turns": [
+    {
+      "say": "am i ready to start?",
+      "must_run": ["e0 status"],
+      "must_match": ["T010|Say hello"],
+      "must_not_match": ["\\be0 (check|status|start|task|verify|dismiss)", "\\.exit0/e0", "run `?e0"]
+    }
+  ]
+}

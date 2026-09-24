@@ -67,7 +67,7 @@ may add its own skills on top, but does not restate the framework's.
 
 **Determinism in data, fluency in the model.** The system supplies content, learning flow, MCQs, tests and rules. The model's entire job is to personalize this data to match the student's context. When the agent says "task 3 depends on task 2," it read that from
 `catalog.json`; it did not infer it. This is what allows a cheap model (Haiku, GPT-mini) to run
-the whole experience. The `getting-started` skill opens by recommending they switch
+the whole experience. The `session` skill opens by recommending they switch
 their agent to its cheapest model.
 
 **Local-first and rebuildable.** Everything under `.exit0/` can be deleted and reconstructed
@@ -75,6 +75,23 @@ from the course content repo plus one committed progress file. No state is born 
 
 **Advisory, not blocking.** A student who wants to attempt task 60 after task 1 may. The system
 warns, explains, records the override, and gets out of the way.
+
+**Detected facts vs. student-set facts.** `profile.json` holds two different kinds of fact, and
+the system must not confuse them. Some facts `e0` can observe on its own — the operating system
+is the only one so far. Everything else — which shell the student ends up running in, which test
+framework the course has them adopt — is set explicitly, by the student or by an onboarding task,
+via `e0 profile set <key> <value>`. `e0` never guesses at a fact it cannot reliably observe, and
+never silently records one the student hasn't confirmed. A course that needs a student on a
+specific shell (say, Windows students working through WSL in a DevOps course) teaches that as
+part of an onboarding task — using the existing `os`-keyed variant mechanism to give OS-specific
+instructions — and has the student (or the agent, once setup is confirmed) record the outcome
+with `e0 profile set shell bash`. No separate mechanism is needed.
+
+**Plain, respectful language.** Every word the student reads — CLI messages, READMEs, skills,
+task text `e0` itself owns — is written for someone who is still learning English, not just
+still learning to code. Short sentences. Common words. No idioms, no cleverness, no jargon
+without an explanation. State what happened and why it matters, plainly. This is not a tone
+preference; it is a way of taking the student's learning process seriously.
 
 ---
 
@@ -93,7 +110,7 @@ flowchart TB
     subgraph Local["Student's fork"]
         AG["Coding agent<br/>cheap model"]
         SK[".exit0/skills/"]
-        CLI[".exit0/bin/e0"]
+        CLI[".exit0/framework/bin/e0"]
         CO[".exit0/course/"]
         ST[".exit0/state/"]
         TA[".exit0/tasks/"]
@@ -133,7 +150,7 @@ Four planes:
 exit0/e0/                                  # public, tagged releases
   bin/e0                                   # the CLI — curled at bootstrap
   skills/                                  # procedure → synced to .exit0/skills/
-    getting-started.md
+    session.md
     working-on-a-task.md
     using-the-knowledge-base.md
     reviewing-a-pr.md
@@ -229,13 +246,21 @@ exit0/<course-template-repo>/
 `exit0.json` is how a course-agnostic framework learns which course it is running:
 
 ```json
-{ "courseRepo": "https://github.com/exit0/polybot-content.git" }
+{
+  "courseRepo": "https://github.com/exit0/polybot-content.git",
+  "templateRepo": "https://github.com/exit0/polybot-template.git"
+}
 ```
 
+`templateRepo` is the URL of this template repo itself.
+
 **`e0` is not vendored here.** A forked copy would freeze at whatever version the student forked
-on, and anyone who never updated would stay frozen indefinitely. It is curled from the framework
-repo's latest release at bootstrap and lives in gitignored `.exit0/bin/`. Because the framework
-is released independently of any course, one `e0` fix reaches every student of every course.
+on, and anyone who never updated would stay frozen indefinitely. It is cloned from the framework
+repo's latest release at bootstrap into gitignored `.exit0/framework/`, and runs from
+`.exit0/framework/bin/e0`. Because the framework is released independently of any course, one
+`e0` fix reaches every student of every course. Cloning the whole repo there, rather than
+copying out just the CLI and its skills, keeps bootstrap to one command and gives `e0 init` a
+fixed place to find the framework's own skills — no separate dev-only override needed.
 
 Compatibility runs the other way: a course's `catalog.json` declares `requiresE0`, and `e0`
 refuses — clearly, with guidance — to run a course that needs a newer framework than the one
@@ -253,10 +278,18 @@ toolchain, orienting the student — is the agent's work:
 >
 > That's it. Your agent takes it from here.
 
-This puts one requirement on `AGENTS.md`: it must be self-sufficient *before* `.exit0/` exists.
-Its first instruction is to bootstrap `e0` if it is missing, then run `e0 init`. Every other
-instruction can assume `e0` is present — and can be short, because the real procedure arrives
-with the framework's skills.
+This puts two requirements on `AGENTS.md`:
+
+1. It must be self-sufficient *before* `.exit0/` exists. The bootstrap commands live there
+   because the skills directory does not yet exist.
+2. It must be short. Students may freely modify `AGENTS.md` during the course — adding their
+   own project instructions or adapting it to their workflow. The framework asks only for one
+   short section: read `.exit0/skills/session.md` at the start of every session.
+
+All session behavior — every-session rules, the loop description, the content rules, the
+model suggestion — lives in the `session` skill, which acts as the **gate skill**:
+every agent session is routed through it. A student who replaces the pointer section in
+`AGENTS.md` loses only that line; the skill itself is untouched in `.exit0/`.
 
 ---
 
@@ -265,7 +298,9 @@ with the framework's skills.
 ```
 .exit0/                          # gitignored in its entirety
   README.md                      # what this is; the social contract; do not edit
-  bin/e0                         # single-file Python 3, stdlib only
+  framework/                      # the e0 CLI itself, cloned whole at bootstrap
+    bin/e0                       # single-file Python 3, stdlib only
+    skills/                      # the framework's own skills, read from here
   course/                        # pinned copy of the course content repo @ tag
   skills/                        # framework skills, plus course skills layered over them
   state/
@@ -296,7 +331,7 @@ unit tests are part of the product.
 
 | Command | Behavior |
 |---|---|
-| `e0 init` | Detect OS/shell/tooling; fetch content at latest tag; restore `progress.json` from `origin/exit0-progress` if present; write `.exit0/` |
+| `e0 init` | Detect the OS; fetch content at latest tag; restore `progress.json` from `origin/exit0-progress` if present; write `.exit0/` |
 | `e0 status` | Current task, what's next and why, pending comprehension checks, questions due for re-ask. Checks for a content update on a best-effort basis — offline or unreachable is reported as "unknown", never as an error |
 | `e0 catalog` | Every task with status and dependencies |
 | `e0 start <id>` | Advisory dependency check; copy canonical task + checks; verify check hashes; emit the personalization payload and the issue title/body for the agent |
@@ -587,7 +622,7 @@ below are course-agnostic and never restated per course.
 
 | Skill | Covers |
 |---|---|
-| `getting-started` | The "hi" flow — recommend the cheap model, `e0 init`, orient, first suggestion |
+| `session` | The session gate — recommend the cheap model, `e0 init`, every-session rules, orient, first suggestion |
 | `working-on-a-task` | `start` → personalize → `verify` → TDD loop with `check` |
 | `using-the-knowledge-base` | Fetching a tutorial on request; pointing at covered topics instead of improvising |
 | `reviewing-a-pr` | The "I finished" flow, conduct rules, composing and posting the review |
@@ -595,19 +630,22 @@ below are course-agnostic and never restated per course.
 | `giving-feedback` | Spotting friction, inviting feedback without nagging, composing and filing it |
 | `keeping-current` | The update flow |
 
-The repo root holds `AGENTS.md`, read by Claude Code and Codex. `CLAUDE.md` and
-`.github/copilot-instructions.md` are one-line files pointing at it, so every agent converges on
-the same instructions.
+The repo root holds `AGENTS.md`; `CLAUDE.md` and `.github/copilot-instructions.md` are
+one-line files pointing at it. `AGENTS.md` is short by design: the bootstrap commands for
+a fresh clone, and one section — read `.exit0/skills/session.md` at the start of every
+session. Students may freely add to or modify this file during the course.
 
-`AGENTS.md` is short and imperative: run `e0 status` at the start of a session and after any
-task-related turn; read `.exit0/skills/` before acting; never edit `.exit0/` by hand.
+`session` is the **gate skill**. Every session is routed through it. It carries the loop
+description, every-session rules, the content rules, the model suggestion, and the steps
+for orienting the student. Keeping this in a skill rather than in `AGENTS.md` means a
+student who edits `AGENTS.md` does not accidentally lose the framework's session rules.
 
 ---
 
 ## Conversational Loops
 
-**Onboarding.** Student says "hi". Agent reads `AGENTS.md`, recommends switching to a cheap
-model, then runs `e0 init`. `e0` detects the OS and toolchain, fetches content at
+**Onboarding.** Student says "hi". Agent reads `AGENTS.md`, sees the pointer to
+`session`, reads it, recommends switching to a cheap model, then runs `e0 init`. `e0` detects the OS and toolchain, fetches content at
 the latest tag, restores progress if the orphan branch exists, and returns a state summary. The
 agent greets them with where they are and what's next.
 

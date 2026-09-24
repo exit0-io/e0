@@ -1,0 +1,12 @@
+{
+  "from": "conversation.md line 217: a closed issue with no merged PR is not a celebration; name the protocol and offer to reopen",
+  "issues": [["T010", "CLOSED"]],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": ["e0 status"],
+      "must_match": ["pull request|\\bPR\\b", "reopen"],
+      "must_not_match": ["nice work", "congrat", "well done", "great job"]
+    }
+  ]
+}

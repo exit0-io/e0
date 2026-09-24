@@ -1,0 +1,13 @@
+{
+  "from": "conversation.md line 217: with a merged PR the closed issue is a real completion; move on to the next ready task",
+  "issues": [["T010", "CLOSED"]],
+  "prs": [["T010", "MERGED"]],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": ["e0 status"],
+      "must_match": ["T020"],
+      "must_not_match": ["reopen"]
+    }
+  ]
+}

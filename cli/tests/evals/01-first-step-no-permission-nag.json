@@ -1,0 +1,12 @@
+{
+  "from": "conversation.md line 52: drop the 'allow e0 to run without asking' note; keep the cheap-model tip",
+  "bootstrap": true,
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": ["e0 init", "e0 status"],
+      "must_match": ["welcome", "haiku|cheap|small.{0,20}model"],
+      "must_not_match": ["without asking", "allow .{0,30}e0", "without confirmation"]
+    }
+  ]
+}

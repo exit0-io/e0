@@ -1,0 +1,1476 @@
+#!/usr/bin/env python3
+"""e0 — the Exit0 CLI.
+
+Holds everything deterministic in a course workflow: which tasks are ready, what their rules
+are, whether the student's work passes. The agent asks; it does not guess.
+
+Single file, standard library only, no install step. Never crashes: every invocation
+exits 0 and prints exactly one JSON object to stdout, so a failure is something the
+agent can read aloud rather than a dead end.
+
+Envelope: a successful reply is `{"command", "data", "message"}`. A failure is
+`{"command", "problem", "guidance", "message"}`. The presence of `problem` is the signal.
+"""
+
+import datetime
+import hashlib
+import json
+import pathlib
+import platform
+import re
+import subprocess
+import sys
+
+# Must match the git tag exactly — skills are fetched from this ref.
+E0_VERSION = "v1.3"
+
+# ---------------------------------------------------------------- envelope
+
+
+def reply(command, data=None, message=""):
+    """A successful reply. It has `data` and no `problem` key."""
+    return {
+        "command": command,
+        "data": data if data is not None else {},
+        "message": message,
+    }
+
+
+def problem(command, problem, guidance, message=None):
+    """A failed reply. The `problem` key is what tells it apart from a success."""
+    return {
+        "command": command,
+        "problem": problem,
+        "guidance": guidance,
+        "message": message if message is not None else f"{problem} {guidance}",
+    }
+
+
+# ---------------------------------------------------------------- process
+
+
+def run_git(cwd, *args):
+    """Run a git command. Returns (returncode, stdout, stderr) and never raises."""
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except OSError as exc:
+        return 127, "", str(exc)
+
+
+# ---------------------------------------------------------------- paths
+
+
+def repo_root(start=None):
+    """The git top level containing `start`, or None if there is not one."""
+    base = pathlib.Path(start) if start is not None else pathlib.Path.cwd()
+    code, out, _ = run_git(base, "rev-parse", "--show-toplevel")
+    if code != 0 or not out:
+        return None
+    return pathlib.Path(out)
+
+
+def current_branch(root):
+    """The checked-out branch name, or None (detached HEAD, no commits, git missing)."""
+    code, out, _ = run_git(root, "branch", "--show-current")
+    return out if code == 0 and out else None
+
+
+# `git status --porcelain` codes of a file caught in a merge conflict.
+_UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+
+
+def git_facts(root):
+    """What the working tree looks like, so the agent picks the right Git help without
+    looking. `unpushedCommits` is None when GitHub has no copy of the branch yet."""
+    branch = current_branch(root)
+    uncommitted, conflicts = [], []
+    code, out, _ = run_git(root, "status", "--porcelain", "--untracked-files=all")
+    if code == 0:
+        for line in out.splitlines():
+            if len(line) < 4:
+                continue
+            status, path = line[:2], line[3:]
+            (conflicts if status in _UNMERGED else uncommitted).append(path)
+
+    unpushed = None
+    if branch:
+        code, out, _ = run_git(root, "rev-list", "--count", f"origin/{branch}..{branch}")
+        if code == 0 and out.isdigit():
+            unpushed = int(out)
+
+    return {
+        "branch": branch,
+        "uncommitted": uncommitted,
+        "conflicts": conflicts,
+        "unpushedCommits": unpushed,
+    }
+
+
+def task_for_branch(branch, tasks):
+    """The task a branch name points at: it holds the task id (t010) or the title as a slug
+    (say-hello). None when the name says nothing."""
+    if not branch:
+        return None
+    name = branch.lower()
+    for task in tasks:
+        slug = re.sub(r"[^a-z0-9]+", "-", task["title"].lower()).strip("-")
+        if task["id"].lower() in name or (slug and slug in name):
+            return task["id"]
+    return None
+
+
+def exit0_dir(root):
+    return pathlib.Path(root) / ".exit0"
+
+
+def state_dir(root):
+    return exit0_dir(root) / "state"
+
+
+def task_content_dir(root, task_id):
+    return pathlib.Path(root) / "content" / str(task_id).lower()
+
+
+def school_checks_dir(root, task_id):
+    return pathlib.Path(root) / "tests" / "school-checks" / str(task_id).lower()
+
+
+def require_repo(command):
+    """Return (root, None) or (None, problem_payload)."""
+    root = repo_root()
+    if root is None:
+        return None, problem(
+            command,
+            "e0 can't find a git repository here.",
+            "This means you either run the e0 command from outside your course repo directory,"
+            "or you have not cloned your course project repository yet.",
+        )
+    return root, None
+
+
+# Framework skills and the files each one is made of, relative to cli/skills/<name>/.
+FRAMEWORK_SKILLS = {
+    "learning": [
+        "SKILL.md",
+        "references/setup-and-update.md",
+        "references/git.md",
+        "assets/checkout.html",
+    ],
+}
+
+def read_config(root):
+    path = exit0_dir(root) / "config.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def raw_content_url(config, path):
+    """URL for a file in the course content repo."""
+    base = config.get("_rawContentBase", "").rstrip("/")
+    if base:
+        return f"{base}/{path}"
+    repo = config.get("courseContentRepo", "")
+    return f"https://raw.githubusercontent.com/{repo}/main/{path}"
+
+
+def raw_framework_url(config, path, ref=None):
+    """URL for a file in the e0 framework repo, at this release unless `ref` says otherwise."""
+    base = config.get("_rawFrameworkBase", "").rstrip("/")
+    if base:
+        return f"{base}/{path}"
+    return f"https://raw.githubusercontent.com/exit0-io/e0/{ref or E0_VERSION}/cli/{path}"
+
+
+def fetch_framework_text(config, path):
+    """Fetch a framework file at this release. If the release tag is not published yet
+    (an e0 taken from a branch), fall back to main so the skills still arrive."""
+    text = fetch_text(raw_framework_url(config, path))
+    if text is None and not config.get("_rawFrameworkBase"):
+        text = fetch_text(raw_framework_url(config, path, ref="main"))
+    return text
+
+
+def fetch_text(url):
+    """Fetch a URL and return its text body, or None on any error."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            return resp.read().decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ---------------------------------------------------------------- state
+#
+# e0 keeps almost nothing locally. The student's progress lives in the GitHub issues of their
+# own repo: an open issue titled "[T010] ..." means T010 is in progress, a closed one means it
+# is complete. The only local state is profile.json (facts about this machine).
+
+
+def run_gh(cwd, *args):
+    """Run a GitHub CLI command. Returns (returncode, stdout, stderr) and never raises."""
+    try:
+        proc = subprocess.run(
+            ["gh", *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 127, "", str(exc)
+
+
+ISSUE_TASK_ID = re.compile(r"^\s*\[([^\]]+)\]")
+
+
+def gh_json(root, *args):
+    """Run a gh command that prints JSON. Returns (parsed, None) or (None, error_text)."""
+    code, out, err = run_gh(root, *args)
+    if code != 0:
+        return None, err or out or "the gh command failed"
+    try:
+        return json.loads(out or "[]"), None
+    except ValueError:
+        return None, "gh returned something that is not JSON"
+
+
+def _task_for_title(catalog, title):
+    match = ISSUE_TASK_ID.match(title or "")
+    return find_task(catalog, match.group(1)) if match else None
+
+
+def _pr_for(task, issue_number, prs, catalog):
+    """The pull request linked to a task: its title names the task, or its body mentions the
+    task's issue number. A merged PR wins, then an open one, then the newest closed one."""
+    linked = []
+    for pr in prs:
+        by_title = _task_for_title(catalog, pr.get("title")) is task
+        by_body = issue_number is not None and re.search(
+            rf"(?<![\w/])#{issue_number}\b", pr.get("body") or ""
+        )
+        if by_title or by_body:
+            linked.append(pr)
+    if not linked:
+        return None
+    rank = {"MERGED": 0, "OPEN": 1, "CLOSED": 2}
+    best = sorted(linked, key=lambda pr: (rank.get(pr.get("state", "").upper(), 3), -pr.get("number", 0)))[0]
+    return {
+        "number": best.get("number"),
+        "url": best.get("url"),
+        "state": best.get("state"),
+        "merged": best.get("state", "").upper() == "MERGED",
+    }
+
+
+def github_progress(root, catalog):
+    """Read the student's progress from the GitHub issues and pull requests of this repo.
+
+    Returns (progress, None) or (None, error_text). `progress` maps a task id to
+    {"state": "in_progress" | "complete", "issue": {...}, "pr": {...} | None}.
+    An open issue wins over a closed one for the same task.
+    """
+    issues, error = gh_json(
+        root, "issue", "list", "--state", "all", "--limit", "1000",
+        "--json", "number,title,state,url",
+    )
+    if error:
+        return None, error
+    prs, error = gh_json(
+        root, "pr", "list", "--state", "all", "--limit", "1000",
+        "--json", "number,title,state,url,body",
+    )
+    if error:
+        return None, error
+
+    progress = {}
+    for issue in issues:
+        task = _task_for_title(catalog, issue.get("title"))
+        if task is None:
+            continue
+        state = "in_progress" if issue.get("state", "").upper() == "OPEN" else "complete"
+        current = progress.get(task["id"])
+        if current and current["state"] == "in_progress":
+            continue
+        progress[task["id"]] = {
+            "state": state,
+            "issue": {
+                "number": issue.get("number"),
+                "url": issue.get("url"),
+                "state": issue.get("state"),
+            },
+            "pr": _pr_for(task, issue.get("number"), prs, catalog),
+        }
+    return progress, None
+
+
+def statuses_from(progress):
+    return {task_id: entry["state"] for task_id, entry in progress.items()}
+
+
+def require_progress(command, root, catalog):
+    """Return (progress, None) or (None, problem_payload)."""
+    progress, error = github_progress(root, catalog)
+    if progress is None:
+        return None, problem(
+            command,
+            "e0 reads your progress from the GitHub issues of this repo, and could not. "
+            f"({error})",
+            "Check that the GitHub CLI is installed and logged in ('gh auth status'), "
+            "and that this repo has a GitHub remote ('git remote -v').",
+        )
+    return progress, None
+
+
+def _detect_os():
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    if system == "windows":
+        return "windows"
+    return "linux"
+
+
+def detect_profile(root):
+    return {"os": _detect_os()}
+
+
+def read_profile(root):
+    path = state_dir(root) / "profile.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+
+
+def write_profile(root, profile):
+    directory = state_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "profile.json").write_text(
+        json.dumps(profile, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+# A dismissed reminder sleeps this long. Not progress: progress lives in GitHub.
+DISMISS_DAYS = 7
+
+
+def read_dismissed(root, today=None):
+    """{task id: date the reminder wakes up}, expired entries dropped."""
+    path = state_dir(root) / "dismissed.json"
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    today = (today or datetime.date.today()).isoformat()
+    return {task: until for task, until in raw.items() if isinstance(until, str) and until > today}
+
+
+def write_dismissed(root, dismissed):
+    directory = state_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "dismissed.json").write_text(
+        json.dumps(dismissed, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+# ---------------------------------------------------------------- course
+
+
+def read_catalog(root):
+    path = exit0_dir(root) / "catalog.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+
+
+def find_task(catalog, task_id):
+    if not catalog:
+        return None
+    wanted = str(task_id).strip().lower()
+    for task in catalog.get("tasks", []):
+        if task["id"].lower() == wanted:
+            return task
+    return None
+
+
+def require_content(command, root):
+    """Return (catalog, None) or (None, problem_payload)."""
+    catalog = read_catalog(root)
+    if catalog is None:
+        return None, problem(
+            command,
+            "The course content has not been downloaded yet.",
+            "Run 'e0 init' to download it.",
+        )
+    return catalog, None
+
+
+def ordered_tasks(catalog):
+    return sorted(catalog.get("tasks", []), key=lambda item: item.get("order", 0))
+
+
+def available_tasks(catalog, statuses):
+    """Tasks the student can start now: not started, not complete, and every task they
+    build on is complete. Tasks form a tree, so this is a list, not a single task."""
+    return [
+        task
+        for task in ordered_tasks(catalog)
+        if statuses.get(task["id"]) is None and not unmet_dependencies(task, statuses)
+    ]
+
+
+def tasks_in_progress(catalog, statuses):
+    return [task for task in ordered_tasks(catalog) if statuses.get(task["id"]) == "in_progress"]
+
+
+def task_summary(task):
+    return {
+        "id": task["id"],
+        "title": task["title"],
+        "description": task.get("description", ""),
+    }
+
+
+def unmet_dependencies(task, statuses):
+    return [
+        dependency
+        for dependency in task.get("dependsOn", [])
+        if statuses.get(dependency) != "complete"
+    ]
+
+
+# ---------------------------------------------------------------- markers
+
+OPEN_VARIANT = re.compile(r'^\s*<!--\s*e0:variant\s+id="([^"]+)"\s*-->\s*$')
+CLOSE_VARIANT = re.compile(r"^\s*<!--\s*/e0:variant\s*-->\s*$")
+OPEN_RETONE = re.compile(r'^\s*<!--\s*e0:retone(?:\s+based-on="([^"]*)")?\s*-->\s*$')
+CLOSE_RETONE = re.compile(r"^\s*<!--\s*/e0:retone\s*-->\s*$")
+WHEN = re.compile(r"^\s*<!--\s*when:\s*(.*?)\s*-->\s*$")
+
+
+class MarkerError(Exception):
+    """Raised when region markers are malformed. Callers always catch this."""
+
+
+def parse_when(value):
+    conditions = {}
+    for token in (value or "").split():
+        if "=" not in token:
+            continue
+        key, _, val = token.partition("=")
+        conditions[key.strip()] = val.strip()
+    return conditions
+
+
+def _split_branches(lines):
+    """Turn the inside of a variant block into a list of branches."""
+    has_when = any(WHEN.match(line) for line in lines)
+    if not has_when:
+        # Collapsed variant: agent selected one branch, no when: markers remain.
+        return [{"when": {}, "text": "".join(lines).strip("\n")}]
+
+    branches = []
+    current = None
+    for line in lines:
+        match = WHEN.match(line)
+        if match:
+            current = {"when": parse_when(match.group(1)), "lines": []}
+            branches.append(current)
+            continue
+        if current is None:
+            if line.strip():
+                raise MarkerError(
+                    "content inside a variant block before the first 'when:' marker"
+                )
+            continue
+        current["lines"].append(line)
+    return [
+        {"when": branch["when"], "text": "".join(branch["lines"]).strip("\n")}
+        for branch in branches
+    ]
+
+
+def parse_regions(text):
+    """Split a document into ordered fixed / variant / retone segments.
+
+    Every segment carries `raw`, so concatenating them reproduces the input exactly.
+    """
+    lines = text.splitlines(keepends=True)
+    regions = []
+    buffer = []
+    index = 0
+
+    def flush_fixed():
+        if buffer:
+            blob = "".join(buffer)
+            regions.append({"kind": "fixed", "text": blob, "raw": blob})
+            buffer.clear()
+
+    while index < len(lines):
+        line = lines[index]
+
+        if CLOSE_VARIANT.match(line) or CLOSE_RETONE.match(line):
+            raise MarkerError(f"closing marker without an opening one on line {index + 1}")
+
+        open_variant = OPEN_VARIANT.match(line)
+        open_retone = OPEN_RETONE.match(line)
+
+        if not open_variant and not open_retone:
+            buffer.append(line)
+            index += 1
+            continue
+
+        flush_fixed()
+        opener = line
+        body = []
+        closer_pattern = CLOSE_VARIANT if open_variant else CLOSE_RETONE
+        other_opener = OPEN_RETONE if open_variant else OPEN_VARIANT
+        index += 1
+
+        while index < len(lines) and not closer_pattern.match(lines[index]):
+            if OPEN_VARIANT.match(lines[index]) or other_opener.match(lines[index]):
+                raise MarkerError(f"nested region marker on line {index + 1}")
+            body.append(lines[index])
+            index += 1
+
+        if index >= len(lines):
+            raise MarkerError("region opened but never closed")
+
+        closer = lines[index]
+        index += 1
+        raw = opener + "".join(body) + closer
+
+        if open_variant:
+            regions.append(
+                {
+                    "kind": "variant",
+                    "id": open_variant.group(1),
+                    "branches": _split_branches(body),
+                    "text": "".join(body),
+                    "raw": raw,
+                }
+            )
+        else:
+            regions.append(
+                {
+                    "kind": "retone",
+                    "basedOn": open_retone.group(1) or "",
+                    "text": "".join(body),
+                    "raw": raw,
+                }
+            )
+
+    flush_fixed()
+    return regions
+
+
+def select_branch(branches, facts):
+    for branch in branches:
+        if all(facts.get(key) == value for key, value in branch["when"].items()):
+            return branch
+    return None
+
+
+def personalization_payload(canonical_text, profile):
+    """What the agent is permitted to act on — and nothing else."""
+    regions = parse_regions(canonical_text)
+    variants = []
+    retone_blocks = []
+    referenced_keys = set()
+
+    for region in regions:
+        if region["kind"] == "variant":
+            variants.append({"id": region["id"], "branches": region["branches"]})
+            for branch in region["branches"]:
+                referenced_keys.update(branch["when"].keys())
+        elif region["kind"] == "retone":
+            retone_blocks.append({"basedOn": region["basedOn"]})
+
+    facts = {key: profile[key] for key in sorted(referenced_keys) if key in profile}
+    return {"variants": variants, "retoneBlocks": retone_blocks, "facts": facts}
+
+
+def verify_document(canonical_text, personalized_text):
+    """Check that all fixed regions from canonical are intact in the clean personalized doc.
+
+    The personalized doc is clean Markdown with no markers. Returns {"violations": [...]}.
+    """
+    try:
+        regions = parse_regions(canonical_text)
+    except MarkerError as exc:
+        return {
+            "violations": [
+                {
+                    "kind": "structure",
+                    "message": f"The original document has markers with a problem: {exc}",
+                }
+            ]
+        }
+
+    violations = []
+    for region in regions:
+        if region["kind"] == "fixed" and region["text"].strip():
+            if region["text"] not in personalized_text:
+                violations.append(
+                    {
+                        "kind": "fixed",
+                        "message": "Protected text was changed or removed. "
+                                   "Personalize again from data.canonical of 'e0 task <id>'.",
+                    }
+                )
+    return {"violations": violations}
+
+
+# ---------------------------------------------------------------- tasks
+
+
+def sha256_file(path):
+    return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+
+def download_skills(root, config, catalog):
+    """Fetch framework and course skills into .exit0/skills/. Returns list of downloaded names."""
+    skills_dir = exit0_dir(root) / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    downloaded = []
+
+    for name, files in FRAMEWORK_SKILLS.items():
+        fetched = False
+        for relative in files:
+            text = fetch_framework_text(config, f"skills/{name}/{relative}")
+            if text is None:
+                continue
+            dest = skills_dir / name / relative
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+            fetched = True
+        if fetched:
+            downloaded.append(name)
+
+    for name in catalog.get("skills", []):
+        text = fetch_text(raw_content_url(config, f"skills/{name}"))
+        if text is not None:
+            (skills_dir / name).write_text(text, encoding="utf-8")
+            downloaded.append(name)
+
+    return downloaded
+
+
+def read_checks_spec(root, task_id):
+    path = school_checks_dir(root, task_id) / "checks.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+
+
+def check_hashes(root, task_id):
+    """Names of check files whose contents no longer match checks.json."""
+    spec = read_checks_spec(root, task_id)
+    if not spec:
+        return []
+    checks = school_checks_dir(root, task_id)
+    drifted = []
+    for name, expected in spec.get("files", {}).items():
+        candidate = checks / name
+        if not candidate.exists() or sha256_file(candidate) != expected:
+            drifted.append(name)
+    return sorted(drifted)
+
+
+def run_checks(root, task_id):
+    """Run the task's checks. Returns (passed, combined_output)."""
+    spec = read_checks_spec(root, task_id)
+    if not spec or not spec.get("run"):
+        return False, "This task has no runnable checks."
+
+    checks = school_checks_dir(root, task_id)
+    command = [
+        part.replace("{checks_dir}", str(checks)) for part in spec["run"]
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "The checks took longer than 5 minutes and were stopped."
+    except OSError as exc:
+        return False, f"e0 could not run the checks: {exc}"
+
+    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+
+# ---------------------------------------------------------------- commands
+
+
+def cmd_profile(args):
+    root, failure = require_repo("profile")
+    if failure:
+        return failure
+
+    action = args[0] if args else "get"
+    profile = read_profile(root) or detect_profile(root)
+
+    if action == "get":
+        return reply(
+            "profile",
+            {"profile": profile},
+            "Your profile: " + ", ".join(f"{k}={v}" for k, v in sorted(profile.items())),
+        )
+
+    if action == "set":
+        if len(args) < 3:
+            return problem(
+                "profile",
+                "e0 profile set needs two things: a key and a value.",
+                "Use: e0 profile set <key> <value>",
+            )
+        key, value = args[1], args[2]
+        profile[key] = value
+        write_profile(root, profile)
+        return reply("profile", {"profile": profile}, f"Recorded {key}={value}.")
+
+    return problem(
+        "profile",
+        f"'{action}' is not a profile command.",
+        "Use 'e0 profile get' or 'e0 profile set <key> <value>'.",
+    )
+
+
+def cmd_init(args):
+    root, failure = require_repo("init")
+    if failure:
+        return failure
+
+    config = read_config(root)
+    if not config.get("courseContentRepo"):
+        return problem(
+            "init",
+            "e0 cannot find the course content repo.",
+            "Check that .exit0/config.json exists and has a 'courseContentRepo' key.",
+        )
+
+    catalog_text = fetch_text(raw_content_url(config, "catalog.json"))
+    if catalog_text is None:
+        return problem(
+            "init",
+            "e0 could not download the course catalog.",
+            "Check your internet connection and the 'courseContentRepo' in .exit0/config.json.",
+        )
+
+    try:
+        catalog = json.loads(catalog_text)
+    except ValueError:
+        return problem(
+            "init",
+            "The course catalog is not valid JSON.",
+            "This is a problem with the course itself. Please report it.",
+        )
+
+    (exit0_dir(root) / "catalog.json").write_text(catalog_text, encoding="utf-8")
+
+    profile = read_profile(root) or detect_profile(root)
+    write_profile(root, profile)
+
+    (pathlib.Path(root) / "content").mkdir(exist_ok=True)
+    (pathlib.Path(root) / "tests" / "school-checks").mkdir(parents=True, exist_ok=True)
+
+    download_skills(root, config, catalog)
+
+    course = catalog.get("course", {})
+
+    return reply(
+        "init",
+        {
+            "course": course,
+            "profile": profile,
+            "taskCount": len(catalog.get("tasks", [])),
+        },
+        f"Ready. {course.get('title', 'The course')} has "
+        f"{len(catalog.get('tasks', []))} tasks.",
+    )
+
+
+def cmd_catalog(args):
+    root, failure = require_repo("catalog")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("catalog", root)
+    if failure:
+        return failure
+
+    progress, failure = require_progress("catalog", root, catalog)
+    if failure:
+        return failure
+    statuses = statuses_from(progress)
+    # Every field the course author put in the catalog passes through untouched, so new
+    # kinds of information (purpose, learning goals, ...) reach the agent with no e0 change.
+    tasks = [
+        {**task, "status": statuses.get(task["id"], "not_started")}
+        for task in ordered_tasks(catalog)
+    ]
+
+    done = sum(1 for task in tasks if task["status"] == "complete")
+    return reply(
+        "catalog",
+        {"course": catalog.get("course", {}), "tasks": tasks},
+        f"{len(tasks)} tasks, {done} complete.",
+    )
+
+
+def cmd_status(args):
+    root, failure = require_repo("status")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("status", root)
+    if failure:
+        return failure
+
+    progress, failure = require_progress("status", root, catalog)
+    if failure:
+        return failure
+    statuses = statuses_from(progress)
+
+    def with_github(task):
+        entry = progress[task["id"]]
+        return {**task_summary(task), "issue": entry["issue"], "pr": entry["pr"]}
+
+    in_progress = [with_github(task) for task in tasks_in_progress(catalog, statuses)]
+    ready = [task_summary(task) for task in available_tasks(catalog, statuses)]
+    completed = [
+        with_github(task)
+        for task in ordered_tasks(catalog)
+        if statuses.get(task["id"]) == "complete"
+    ]
+
+    # The protocol for a task: open issue -> feature branch -> PR into main -> checks pass ->
+    # PR merged -> issue closed -> comprehension questions. A closed issue with no merged PR
+    # means a step was skipped. The student may do that; the agent must say so.
+    warnings = [
+        {
+            "kind": "closed_without_pr",
+            "taskId": task["id"],
+            "message": (
+                f"The issue of {task['id']} is closed, but no merged pull request is linked to it. "
+                "The task counts as complete, but the student may have skipped the PR, the checks, "
+                "or the review. Tell them, and offer to reopen the issue if the work is not done."
+            ),
+        }
+        for task in completed
+        if not (task["pr"] and task["pr"]["merged"])
+    ]
+
+    # A task started before the tasks it builds on are done. The student may do that too;
+    # the agent says which tasks were skipped, once, until the student asks to drop it.
+    dismissed = read_dismissed(root)
+    for task in in_progress:
+        missing = unmet_dependencies(find_task(catalog, task["id"]), statuses)
+        if missing and task["id"] not in dismissed:
+            warnings.append(
+                {
+                    "kind": "dependency",
+                    "taskId": task["id"],
+                    "missing": missing,
+                    "message": (
+                        f"{task['id']} is in progress but builds on {', '.join(missing)}, "
+                        f"not complete yet. Tell the student, list the unfinished tasks, and "
+                        f"suggest skipping them. If they agree, run 'e0 dismiss {task['id']}' "
+                        f"and the reminder sleeps for {DISMISS_DAYS} days."
+                    ),
+                }
+            )
+
+    # Task work belongs on a task branch. A task in progress while `main` is checked out
+    # means the branch step was skipped, or not taken yet.
+    git = git_facts(root)
+    branch = git["branch"]
+    git_reference = ".exit0/skills/learning/references/git.md"
+    if in_progress and branch == "main":
+        if git["unpushedCommits"]:
+            state = "committed"
+            hint = (
+                f"There are {git['unpushedCommits']} commit(s) on main that GitHub does not "
+                "have. Follow 'Commits on main' in " + git_reference + ": show the graph, say "
+                "that nobody pushes to main without review and tests, then offer move or drop."
+            )
+        elif git["uncommitted"]:
+            state = "uncommitted"
+            hint = (
+                f"Edited but not committed: {', '.join(git['uncommitted'])}. Name these files. "
+                "Follow 'Uncommitted work on main' in " + git_reference + ": say that nobody "
+                "pushes to main without review and tests, then offer keep or throw away."
+            )
+        else:
+            state = "clean"
+            hint = (
+                "Nothing is edited yet. Read " + git_reference + ", then walk the student to a "
+                "branch, one command per message. The first command is `git checkout main`; "
+                "the rest wait for its result."
+            )
+        if len(in_progress) > 1:
+            hint = (
+                "Several tasks are in progress: first ask which one they work on now, then "
+                + hint[0].lower() + hint[1:]
+            )
+        warnings.append(
+            {
+                "kind": "on_main",
+                "taskId": in_progress[0]["id"],
+                "state": state,
+                "message": (
+                    f"{', '.join(t['id'] for t in in_progress)} "
+                    f"{'is' if len(in_progress) == 1 else 'are'} in progress and the current "
+                    f"branch is main. Task work belongs on a task branch. {hint}"
+                ),
+            }
+        )
+
+    # Several tasks in progress on one branch: only a telling name says which task it is for.
+    branch_task = task_for_branch(branch, in_progress)
+    if len(in_progress) > 1 and branch and branch != "main" and branch_task is None:
+        warnings.append(
+            {
+                "kind": "unclear_branch",
+                "taskId": None,
+                "message": (
+                    f"Several tasks are in progress and the branch name '{branch}' names none "
+                    "of them. Ask which task they work on now. "
+                    "Follow 'Unclear branch' in " + git_reference + "."
+                ),
+            }
+        )
+
+    def names(tasks):
+        return ", ".join(
+            f"{task['id']}: {task['title']}"
+            + (f" ({task['issue']['url']})" if task.get("issue") else "")
+            for task in tasks
+        )
+
+    if in_progress and ready:
+        message = f"You are working on {names(in_progress)}. Also ready to start: {names(ready)}."
+    elif in_progress:
+        message = f"You are working on {names(in_progress)}. The next tasks build on it."
+    elif ready:
+        message = f"Nothing in progress. Ready to start: {names(ready)}."
+    elif len(completed) == len(catalog.get("tasks", [])):
+        message = "Every task is complete."
+    else:
+        message = "Nothing in progress and nothing is ready to start."
+
+    return reply(
+        "status",
+        {
+            "inProgress": in_progress,
+            "next": ready,
+            "completed": completed,
+            "warnings": warnings,
+            "branch": branch,
+            "branchTask": branch_task,
+            "git": git,
+            "update": "unknown",
+        },
+        message,
+    )
+
+
+def cmd_dismiss(args):
+    """Silence the dependency reminder of a task the student chose to work on out of order."""
+    root, catalog, task, failure = resolve_task("dismiss", args)
+    if failure:
+        return failure
+    until = datetime.date.today() + datetime.timedelta(days=DISMISS_DAYS)
+    dismissed = read_dismissed(root)
+    dismissed[task["id"]] = until.isoformat()
+    write_dismissed(root, dismissed)
+    return reply(
+        "dismiss",
+        {"taskId": task["id"], "until": until.isoformat()},
+        f"The reminder that {task['id']} builds on unfinished tasks is off until {until.isoformat()}.",
+    )
+
+
+def download_checks(root, task_id, config):
+    """Fetch checks.json and all listed check files into tests/school-checks/{id}/."""
+    dest = school_checks_dir(root, task_id)
+    result = {"copied": [], "mismatched": []}
+
+    checks_text = fetch_text(
+        raw_content_url(config, f"tasks/{task_id.lower()}/checks/checks.json")
+    )
+    if checks_text is None:
+        return result
+
+    try:
+        spec = json.loads(checks_text)
+    except ValueError:
+        return result
+
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "checks.json").write_text(checks_text, encoding="utf-8")
+    result["copied"].append("checks.json")
+
+    for name in spec.get("files", {}):
+        file_text = fetch_text(
+            raw_content_url(config, f"tasks/{task_id.lower()}/checks/{name}")
+        )
+        if file_text is not None:
+            (dest / name).write_text(file_text, encoding="utf-8")
+            result["copied"].append(name)
+            if sha256_file(dest / name) != spec["files"][name]:
+                result["mismatched"].append(name)
+
+    return result
+
+
+def resolve_task(command, args):
+    """Shared entry for commands that take a task id. Returns (root, catalog, task, None)
+    or (None, None, None, problem_payload)."""
+    root, failure = require_repo(command)
+    if failure:
+        return None, None, None, failure
+
+    catalog, failure = require_content(command, root)
+    if failure:
+        return None, None, None, failure
+
+    available = ", ".join(task["id"] for task in ordered_tasks(catalog))
+    if not args:
+        return None, None, None, problem(
+            command,
+            f"e0 {command} needs a task id.",
+            f"Use: e0 {command} <id>. The tasks are: {available}",
+        )
+
+    task = find_task(catalog, args[0])
+    if task is None:
+        return None, None, None, problem(
+            command,
+            f"There is no task called '{args[0]}'.",
+            f"The tasks are: {available}",
+        )
+    return root, catalog, task, None
+
+
+def task_paths(task_id):
+    return {
+        "task": f"content/{task_id.lower()}/task.md",
+        "checks": f"tests/school-checks/{task_id.lower()}",
+    }
+
+
+def fetch_canonical(command, root, task_id):
+    """Return (canonical_text, None) or (None, problem_payload)."""
+    config = read_config(root)
+    text = fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/task.md"))
+    if text is None:
+        return None, problem(
+            command,
+            f"e0 could not download task {task_id}.",
+            "Check your internet connection.",
+        )
+    return text, None
+
+
+def dependency_warning(task, statuses):
+    unmet = unmet_dependencies(task, statuses)
+    if not unmet:
+        return None
+    return {
+        "kind": "dependency",
+        "message": (
+            f"{task['id']} builds on {', '.join(unmet)}, which "
+            f"{'is' if len(unmet) == 1 else 'are'} not complete yet. "
+            "You can keep going, but you might be missing important background."
+        ),
+    }
+
+
+def cmd_task(args):
+    """Fetch a task for the agent: the canonical text, what may be personalized, the checks.
+    Starts nothing, so it is safe when the student only wants to hear about a task."""
+    root, catalog, task, failure = resolve_task("task", args)
+    if failure:
+        return failure
+
+    task_id = task["id"]
+    canonical_text, failure = fetch_canonical("task", root, task_id)
+    if failure:
+        return failure
+
+    warnings = []
+    checks = download_checks(root, task_id, read_config(root))
+    for name in checks["mismatched"]:
+        warnings.append(
+            {
+                "kind": "check_hash",
+                "message": f"The check file {name} does not match its published hash.",
+            }
+        )
+
+    profile = read_profile(root) or detect_profile(root)
+    try:
+        payload = personalization_payload(canonical_text, profile)
+    except MarkerError as exc:
+        payload = {"variants": [], "retoneBlocks": [], "facts": {}}
+        warnings.append(
+            {
+                "kind": "markers",
+                "message": f"The personalization markers in this task have a problem ({exc}). "
+                "The task text is still correct. Write it as it is, without the markers.",
+            }
+        )
+
+    # Progress is nice to have here, not required: "tell me about T020" must work even when
+    # gh is not set up yet.
+    progress, error = github_progress(root, catalog)
+    if progress is None:
+        statuses = {}
+        status = "unknown"
+        warnings.append(
+            {
+                "kind": "progress",
+                "message": f"e0 could not read the GitHub issues of this repo ({error}), "
+                "so it does not know whether this task was started.",
+            }
+        )
+    else:
+        statuses = statuses_from(progress)
+        status = statuses.get(task_id, "not_started")
+
+    return reply(
+        "task",
+        {
+            "taskId": task_id,
+            "task": task,
+            "canonical": canonical_text,
+            "personalization": payload,
+            "paths": task_paths(task_id),
+            "status": status,
+            "unmetDependencies": unmet_dependencies(task, statuses),
+            "warnings": warnings,
+        },
+        f"The original text of {task_id} is in data.canonical. Apply data.personalization "
+        f"and write the clean Markdown to content/{task_id.lower()}/task.md. "
+        "data.task has what the catalog says about it. Nothing was started.",
+    )
+
+
+def cmd_start(args):
+    """Start a task: make sure the task file is in place and follows the rules, then hand
+    back the GitHub issue that marks the task as in progress."""
+    root, catalog, task, failure = resolve_task("start", args)
+    if failure:
+        return failure
+
+    task_id = task["id"]
+    progress, failure = require_progress("start", root, catalog)
+    if failure:
+        return failure
+    statuses = statuses_from(progress)
+
+    if task_id in progress:
+        state = progress[task_id]["state"]
+        issue = progress[task_id]["issue"]
+        return problem(
+            "start",
+            f"{task_id} is already {'in progress' if state == 'in_progress' else 'complete'}: "
+            f"issue #{issue['number']} ({issue['url']}).",
+            "Run 'e0 status' to see where the student is.",
+        )
+
+    task_path = task_content_dir(root, task_id) / "task.md"
+    if not task_path.exists():
+        return problem(
+            "start",
+            f"The task file content/{task_id.lower()}/task.md does not exist yet.",
+            f"Run 'e0 task {task_id}', personalize data.canonical, write it to that file, "
+            f"then run 'e0 start {task_id}' again.",
+        )
+
+    canonical_text, failure = fetch_canonical("start", root, task_id)
+    if failure:
+        return failure
+
+    personalized_text = task_path.read_text(encoding="utf-8")
+    verdict = verify_task_file("start", task_id, canonical_text, personalized_text)
+    if "problem" in verdict:
+        return verdict
+
+    download_checks(root, task_id, read_config(root))
+
+    warnings = []
+    warning = dependency_warning(task, statuses)
+    if warning:
+        warnings.append(warning)
+
+    return reply(
+        "start",
+        {
+            "taskId": task_id,
+            "task": task,
+            "paths": task_paths(task_id),
+            "warnings": warnings,
+            "issue": {"title": f"[{task_id}] {task['title']}", "body": personalized_text},
+        },
+        f"{task_id} is ready. Open a GitHub issue with data.issue (title and body exactly as "
+        f"given). The open issue is what marks {task_id} as in progress.",
+    )
+
+
+def cmd_verify(args):
+    """Check that content/<id>/task.md still carries every protected part of the original.
+    Only needed after the agent edited the file (to add a note)."""
+    root, catalog, task, failure = resolve_task("verify", args)
+    if failure:
+        return failure
+
+    task_id = task["id"]
+    config = read_config(root)
+
+    canonical_text = fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/task.md"))
+    if canonical_text is None:
+        return problem(
+            "verify",
+            f"e0 could not download the original text of {task_id}.",
+            "Check your internet connection.",
+        )
+
+    task_path = task_content_dir(root, task_id) / "task.md"
+    if not task_path.exists():
+        return problem(
+            "verify",
+            f"The task file for {task_id} does not exist yet.",
+            f"Run 'e0 task {task_id}', personalize data.canonical, "
+            f"and write it to content/{task_id.lower()}/task.md.",
+        )
+
+    return verify_task_file(
+        "verify", task_id, canonical_text, task_path.read_text(encoding="utf-8")
+    )
+
+
+def verify_task_file(command, task_id, canonical_text, personalized_text):
+    """The shared verdict for `verify` and `start`: a success, or a problem with violations."""
+    result = verify_document(canonical_text, personalized_text)
+    path = f"content/{task_id.lower()}/task.md"
+
+    if not result["violations"]:
+        return reply(command, {"violations": [], "path": path}, "The task file follows the rules.")
+
+    payload = problem(
+        command,
+        "The task file changed text it is not allowed to change. "
+        + " ".join(v["message"] for v in result["violations"]),
+        f"Personalize again from data.canonical of 'e0 task {task_id}': keep one branch "
+        "per variant, fill retone blocks only when asked, change nothing else, remove the markers.",
+    )
+    payload["data"] = {"violations": result["violations"]}
+    return payload
+
+
+def cmd_check(args):
+    root, failure = require_repo("check")
+    if failure:
+        return failure
+
+    catalog, failure = require_content("check", root)
+    if failure:
+        return failure
+
+    if args:
+        task = find_task(catalog, args[0])
+        if task is None:
+            return problem(
+                "check",
+                f"There is no task called '{args[0]}'.",
+                "Run 'e0 catalog' to see the task ids.",
+            )
+        task_id = task["id"]
+    else:
+        progress, failure = require_progress("check", root, catalog)
+        if failure:
+            return failure
+        in_progress = tasks_in_progress(catalog, statuses_from(progress))
+        if not in_progress:
+            return problem(
+                "check",
+                "No task is in progress. e0 does not know what to check.",
+                "Use 'e0 check <taskId>', or start a task first with 'e0 start <taskId>'.",
+            )
+        task_id = in_progress[0]["id"]
+
+    if not school_checks_dir(root, task_id).exists():
+        return problem(
+            "check",
+            f"The checks for {task_id} have not been downloaded yet.",
+            f"Run 'e0 task {task_id}' first. It downloads them.",
+        )
+
+    warnings = [
+        {
+            "kind": "check_hash",
+            "message": f"{name} does not match the version that was published. "
+            "Your local result might be wrong. CI always uses the original.",
+        }
+        for name in check_hashes(root, task_id)
+    ]
+
+    passed, output = run_checks(root, task_id)
+
+    data = {
+        "taskId": task_id,
+        "passed": passed,
+        "output": output,
+        "warnings": warnings,
+    }
+
+    if passed:
+        return reply("check", data, f"All checks for {task_id} pass.")
+
+    payload = problem(
+        "check",
+        f"The checks for {task_id} are not passing yet.",
+        "Read the output above to see what failed. Fix your code and run 'e0 check' again.",
+    )
+    payload["data"] = data
+    return payload
+
+
+def cmd_read(args):
+    root, failure = require_repo("read")
+    if failure:
+        return failure
+
+    if not args:
+        catalog, failure = require_content("read", root)
+        if failure:
+            return failure
+        config = read_config(root)
+        index_text = fetch_text(raw_content_url(config, "knowledgebase/index.json"))
+        topics = []
+        if index_text:
+            try:
+                topics = json.loads(index_text).get("topics", [])
+            except ValueError:
+                pass
+        return reply(
+            "read",
+            {"topics": topics},
+            "Use 'e0 read <topic>' to read a knowledge base tutorial.",
+        )
+
+    topic = args[0]
+    catalog, failure = require_content("read", root)
+    if failure:
+        return failure
+
+    config = read_config(root)
+    tutorial_text = fetch_text(
+        raw_content_url(config, f"knowledgebase/{topic}/tutorial.md")
+    )
+    if tutorial_text is None:
+        return problem(
+            "read",
+            f"e0 could not download the tutorial for '{topic}'.",
+            "Run 'e0 read' (no topic) to see available topics.",
+        )
+
+    return reply(
+        "read",
+        {
+            "topic": topic,
+            "tutorial": tutorial_text,
+            "suggestedPath": f"content/knowledge-base/{topic}.md",
+        },
+        f"Tutorial for '{topic}' is in data.tutorial. "
+        f"You can write it to content/knowledge-base/{topic}.md if the student wants a local copy.",
+    )
+
+
+def cmd_help(args):
+    return reply(
+        "help",
+        {"commands": sorted(COMMANDS)},
+        "Available commands: " + ", ".join(sorted(COMMANDS)),
+    )
+
+
+# ---------------------------------------------------------------- dispatch
+
+COMMANDS = {
+    "catalog": cmd_catalog,
+    "check": cmd_check,
+    "dismiss": cmd_dismiss,
+    "help": cmd_help,
+    "init": cmd_init,
+    "profile": cmd_profile,
+    "read": cmd_read,
+    "start": cmd_start,
+    "status": cmd_status,
+    "task": cmd_task,
+    "verify": cmd_verify,
+}
+
+DEFAULT_COMMAND = "status"
+
+_HELP_ALIASES = {"--help", "-h", "-help", "help", "h", "?", "--version", "-v", "version"}
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    raw = argv[0] if argv else DEFAULT_COMMAND
+    command = "help" if raw in _HELP_ALIASES else raw
+    rest = argv[1:]
+
+    try:
+        handler = COMMANDS.get(command)
+        if handler is None:
+            result = problem(
+                command,
+                f"'{command}' is not a command e0 knows.",
+                "Run 'e0 help' to see what commands you can use.",
+            )
+        else:
+            result = handler(rest)
+    except Exception as exc:  # noqa: BLE001 - the never-crash guarantee lives here
+        result = problem(
+            command,
+            f"e0 hit an unexpected error: {exc.__class__.__name__}: {exc}",
+            "This is a bug in e0, not something you did wrong. "
+            "Running the command again usually won't help. Please report this message.",
+        )
+
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

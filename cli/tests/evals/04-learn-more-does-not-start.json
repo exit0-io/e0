@@ -1,0 +1,12 @@
+{
+  "from": "tmp.md lines 153-176: 'learn more' and 'why linux' are answered from e0 task and the catalog, and start nothing",
+  "turns": [
+    {
+      "say": "tell me more about T010. why do I need linux for it?",
+      "must_run": ["e0 task T010"],
+      "must_not_run": ["e0 start", "gh issue create"],
+      "must_match": ["terminal|command line|shell"],
+      "must_not_match": ["personaliz"]
+    }
+  ]
+}

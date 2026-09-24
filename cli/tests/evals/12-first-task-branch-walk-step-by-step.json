@@ -1,0 +1,25 @@
+{
+  "from": "conversation (2026-09-23, 'i want to start'): first task, student on main. The opening explains Git with merge, not pull request, and bolds new terms. The pull is explicit (git pull origin main) with origin explained; after it ran, the agent notes with ;-) that a lone developer pulls nothing. The branch command goes out with its placeholder and a one-line 'name it for this task', no naming rules and no filled-in name until the student tried.",
+  "issues": [["T010", "OPEN"]],
+  "turns": [
+    {
+      "say": "i want to start",
+      "must_run": ["e0 status"],
+      "must_match": ["\\*\\*Git\\*\\*", "merge", "git --version|git checkout main"],
+      "must_not_match": ["pull request", "git checkout -b", "git pull", "git\\.md"],
+      "must_not_run": ["git checkout", "git pull", "e0 start"]
+    },
+    {
+      "say": "git is installed and i am on main. what's next?",
+      "must_match": ["git pull origin main", "\\*\\*origin\\*\\*"],
+      "must_not_match": ["git checkout -b", "```[^`]*git pull\\s*```"],
+      "must_not_run": ["git pull", "git checkout"]
+    },
+    {
+      "say": "Already up to date.",
+      "must_match": ["git checkout -b <task-branch>", "only developer|alone|nobody.*pushed|no one.*pushed"],
+      "must_not_match": ["t010-say-hello", "lowercase", "hyphen", "brackets"],
+      "must_not_run": ["git checkout"]
+    }
+  ]
+}
