@@ -11,7 +11,7 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
 
     # 2. Agent orients. No issues yet, so nothing is in progress.
     payload, _ = run_e0(["status"], student_repo)
-    assert [t["id"] for t in payload["data"]["next"]] == ["T010"]
+    assert [t["id"] for t in payload["data"]["ready"]] == ["T010"]
 
     # 3. Student asks what the course covers.
     payload, _ = run_e0(["catalog"], student_repo)
@@ -57,7 +57,7 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
     set_issues(student_repo, [("T010", "CLOSED")])
     payload, _ = run_e0(["status"], student_repo)
     assert [t["id"] for t in payload["data"]["completed"]] == ["T010"]
-    assert [t["id"] for t in payload["data"]["next"]] == ["T020"]
+    assert [t["id"] for t in payload["data"]["ready"]] == ["T020"]
 
     # 11. Nothing in .exit0/ leaked into git status.
     proc = subprocess.run(

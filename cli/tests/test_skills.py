@@ -141,33 +141,53 @@ def test_learning_skill_sends_the_student_to_a_branch_first():
 
 def test_learning_skill_sends_git_help_to_the_git_reference():
     """conversation.md: first task, a Git question, or work on main all lead to git.md, and the
-    skill itself stays short."""
+    skill itself stays short. conversation (2026-09-24): the facts are status.git, and git.md's
+    table, not a warning, says what they mean."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "references/git.md" in text
-    assert "status.branch" in text
-    assert "on_main" in text
+    assert "status.git" in text
+    assert "table" in text
     assert "first task" in text.lower()
+    assert "on_main" not in text and "unclear_branch" not in text and "status.branch" not in text
 
 
-def test_git_reference_teaches_one_command_at_a_time():
-    """conversation.md: explain, give one command, let the student run it, check, then the next.
-    The placeholder mistake (a branch literally named <task-branch>) is called out and fixed."""
+def test_git_reference_teaches_one_step_at_a_time_without_nagging():
+    """conversation.md: give one command, let the student run it, then the next. conversation
+    (2026-09-24): 'ok' is enough; the agent asked three times for output it did not need.
+    Ask for it only when the student seems stuck."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    assert "One command per message" in text
+    assert "one step per message" in text
+    assert "trust them and move on" in text
+    assert "Ask for the output only when" in text
+    assert "Never send the whole list" not in text
     assert "git --version" in text, "Git may not be installed"
     assert text.index("git checkout main") < text.index("git pull") < text.index("git checkout -b")
     assert "placeholder" in text.lower()
     assert "git branch -m" in text
-    assert "on_main" in text
-    # eval 07: a student who only opened the issue and edited nothing walks the whole road.
-    assert "Nothing edited yet: walk steps 2 to 4" in text
     assert "pull request" in text.lower()
     assert "don't worry" in text.lower()
 
 
+def test_git_reference_is_templates_not_hints():
+    """git.md comment (2026-09-24): the reference is a table of cases and answers. The agent
+    sends the template, it does not think up what to say; 'say why' is gone with the bold and
+    placeholder paragraphs, which SKILL.md and the naming section now own."""
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    assert "Stick to them as closely as you can" in text
+    assert "the templates are the lesson" in text
+    assert "Say why" not in text
+    assert "Bold every term" not in text
+    assert "marks a placeholder in every command" not in text
+    assert not re.search(r"\{\s", text), "a maintainer comment ({ ... }) was left in the reference"
+
+
+def _section(text, title):
+    return text.split(f"## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+
 def _git_reference_opening():
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    return text[text.index("Open with this") : text.index("Then walk these steps")]
+    return text[text.index("Send these messages as they are") : text.index("1. **Switch to `main`.**")]
 
 
 def test_git_reference_opening_says_merge_not_pull_request():
@@ -184,8 +204,7 @@ def test_git_reference_explains_production_with_a_real_example():
     """conversation (2026-09-23): 'the version your users are using' confuses a student whose
     project runs nowhere yet. Production is the environment where the real product runs."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    assert "**production**" in text
-    assert "Production is the environment" in text
+    assert "**production** (f.t.t. production is the environment" in text
     assert "facebook.com" in text
     assert "your users are using" not in text
 
@@ -199,8 +218,7 @@ def test_git_pull_is_explicit_and_explains_origin():
     for text in (skill, git):
         assert "git pull origin main" in text
         assert not re.search(r"git pull(?! origin main)", text), "every pull names origin and main"
-    assert "**origin**" in git
-    assert "colleagues" in git
+    assert "**origin** (f.t.t. " in git
     assert "only developer" in git and ";-)" in git
 
 
@@ -211,11 +229,9 @@ def test_git_reference_lets_the_student_name_the_branch_first():
     text = GIT_REFERENCE.read_text(encoding="utf-8")
     command = text.index("git checkout -b <task-branch>")
     assert "brackets included" not in text
-    assert "replace `<task-branch>` with a meaningful name" in text
+    assert "Replace `<task-branch>` with a meaningful name for this task" in text
     assert text.index("lowercase") > command, "naming rules come after the command"
-    assert text.index("t010-say-hello") > text.index("## Mistakes to catch"), "example names live with the fixes"
-    assert "No example name, no naming rules" in text
-    assert "Let the student try" in text
+    assert text.index("t010-say-hello") > text.index("## Branch naming issues"), "example names live with the fixes"
     assert text.index(";-)") > text.index("git pull origin main"), "the wink comes after the pull ran"
 
 
@@ -235,6 +251,12 @@ def test_learning_skill_orients_on_every_open_task_and_skips_what_comes_next():
     assert "every task in progress, each with its issue URL linked, and every task ready to start" in text
     assert "when they ask" in text
     assert "what comes next" not in text.lower()
+    # SKILL.md comments (2026-09-24): ask which open task they work on; offer a start when none
+    # is open; later tasks come from the catalog, and status.next is gone.
+    assert "ask which one they work on now" in text
+    assert "offer to start a ready task" in text
+    assert "`status.ready`" in text and "status.next" not in text
+    assert "Later tasks, when they ask: `.exit0/catalog.json`" in text
 
 
 def test_learning_skill_handles_a_task_started_out_of_order():
@@ -248,35 +270,46 @@ def test_learning_skill_handles_a_task_started_out_of_order():
 
 def test_learning_skill_reads_the_working_tree_from_status_git():
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
-    for fact in ("status.git", "uncommitted", "conflicts", "unpushedCommits", "unclear_branch"):
+    for fact in ("status.git", "`branch`", "`task`", "uncommitted", "conflicts", "unpushedCommits", "mergingFrom"):
         assert fact in text, f"skill does not mention {fact}"
 
 
-def test_git_reference_has_a_template_for_every_scenario_e0_names():
+def test_git_reference_has_a_template_for_every_scenario():
     """git.md comments (2026-09-23): 'write here the exact format for ALL scenarios so the
-    coding agent and haiku will not guess'. Every section e0 points at exists, and each holds
-    a quoted template."""
+    coding agent and haiku will not guess'. Every section the table points at exists, and
+    each holds a quoted template."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    named_by_e0 = set(re.findall(r"Follow '([^']+)' in", E0_PATH.read_text(encoding="utf-8")))
-    assert named_by_e0 == {"Commits on main", "Uncommitted work on main", "Unclear branch"}
     sections = {
         "Git is missing",
         "The branch, step by step",
-        "The short walk",
-        "Several tasks, on main",
+        "On main with a task open",
         "Unclear branch",
-        "Uncommitted work on main",
-        "Commits on main",
+        "Branch naming issues",
         "Checkout aborted",
         "Merge conflict",
     }
-    assert named_by_e0 <= sections
+    linked = set(re.findall(r"\| \[([^\]]+)\]\(#[a-z-]+\) \|", text))
+    assert linked == sections
     for section in sections:
-        assert re.search(rf"^##+ {re.escape(section)}$", text, re.MULTILINE), f"no section {section}"
-        body = text.split(f" {section}\n", 1)[1].split("\n## ", 1)[0]
-        assert "\n> " in body, f"{section} has no template"
-    assert "## Which scenario" in text
+        assert re.search(rf"^## {re.escape(section)}$", text, re.MULTILINE), f"no section {section}"
+        assert "\n> " in _section(text, section), f"{section} has no template"
     assert "the templates are the lesson" in text
+
+
+def test_git_reference_table_reads_status_git_only():
+    """conversation (2026-09-24): the on_main and unclear_branch warnings duplicated status.git
+    and git.md. The table keys on the git facts alone; e0 sends no procedure."""
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    table = _section(text, "Which scenario")
+    for gone in ("on_main", "unclear_branch", "warnings", "status.branch", "branchTask"):
+        assert gone not in text, f"git.md still says {gone}"
+    assert "`git.branch` is `main` and a task is in progress" in table
+    assert "`git.conflicts` is not empty" in table
+    assert "`git.task` is null" in table
+    assert "`git.branch` has `<` or `>`" in table
+    e0 = E0_PATH.read_text(encoding="utf-8")
+    assert "on_main" not in e0 and "unclear_branch" not in e0
+    assert "Follow '" not in e0
 
 
 def test_git_reference_opening_is_titled_using_git():
@@ -286,39 +319,68 @@ def test_git_reference_opening_is_titled_using_git():
     assert "Important" not in opening and "‼️" not in opening
 
 
-def test_git_reference_short_walk_reminds_and_the_full_walk_explains():
-    """git.md comment (2026-09-23): on a later task the agent reminds ('we never work directly
-    on main, remember?'), gives why, and offers the full explanation when the student is stuck."""
+def test_git_reference_step_by_step_is_for_the_first_issue_or_a_curious_student():
+    """git.md comments (2026-09-24): the full walk runs right after the agent opened the first
+    issue, in the same conversation, or when the student asks to understand Git better after
+    the reminder. Nowhere else. The 'is Git installed' step is gone: Git is missing has it."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    short = text.split("## The short walk", 1)[1].split("\n## ", 1)[0]
-    assert "remember?" in short
-    assert "never work directly on `main`" in short
-    assert "**production**" in short
-    assert "offer the full explanation" in short
-    assert short.count("```bash") == 3, "three commands, one message each"
+    walk = _section(text, "The branch, step by step")
+    assert "right after you opened the student's first issue, in this same conversation" in walk
+    assert "asks to understand Git or branches better" in walk
+    assert "Send these messages as they are" in walk
+    assert "git --version" not in walk
+    assert walk.count("```bash") == 3, "three commands, one message each"
+    assert "1. **Switch to `main`.**" in walk and "3. **Create the task branch.**" in walk
+    assert "you are probably on it already" in walk
+    assert "Can you tell why?" in walk
+    table = _section(text, "Which scenario")
+    assert table.index("step by step") < table.index("On main with a task open"), (
+        "the first issue just opened wins over the on-main reminder"
+    )
+
+
+def test_git_reference_on_main_reminds_then_splits_by_what_the_student_did():
+    """git.md comments (2026-09-24): open issues from another conversation, student on main:
+    remind ('we never work on it directly, remember?', production, review), then one of three
+    cases from status.git: commits on main, uncommitted work, or clean. The clean case is the
+    three commands in one block: the student has seen them before."""
+    text = GIT_REFERENCE.read_text(encoding="utf-8")
+    section = _section(text, "On main with a task open")
+    assert "remember?" in section
+    assert "never work on it directly" in section
+    assert "**production**" in section and "review" in section
+    assert "ask which one they work on now" in section
+    assert "`unpushedCommits`" in section and "`uncommitted`" in section
+    for case in ("**Commits on `main`**", "**Uncommitted work on `main`**", "**Clean**"):
+        assert case in section, f"missing case {case}"
+    assert section.count("```bash") == 1, "the clean case is one block of three commands"
+    clean = section.split("**Clean**", 1)[1]
+    assert "git checkout main\n> git pull origin main\n> git checkout -b <task-branch>" in clean
+    # The old sections folded in here.
+    assert "## Uncommitted work on main" not in text and "## Commits on main" not in text
+    assert "The short walk" not in text and "Mistakes to catch" not in text
 
 
 def test_git_reference_handles_several_open_issues():
-    """git.md comment (2026-09-23): several issues open and on main: choose one. On a branch
-    whose name says nothing (test123): say so, ask which task, suggest a telling name."""
+    """git.md comment (2026-09-23): on a branch whose name says nothing (test123): say so, ask
+    which task, suggest a telling name. The fact is status.git.task."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    on_main = text.split("## Several tasks, on main", 1)[1].split("\n## ", 1)[0]
-    assert "Which one do you want to work on now?" in on_main
-    unclear = text.split("## Unclear branch", 1)[1].split("\n## ", 1)[0]
+    unclear = _section(text, "Unclear branch")
+    assert "`git.task` is null" in unclear
     assert "does not tell me which one" in unclear
     assert "helps both of us" in unclear
-    assert "git branch -m" in text
+    assert "git branch -m" in _section(text, "Branch naming issues")
 
 
 def test_git_reference_reflects_uncommitted_and_committed_work_on_main():
-    """git.md comments (2026-09-23): say what they did, why main is off limits (production, no
-    review, no tests), what is at stake, and the two ways out: keep or drop."""
+    """git.md comments (2026-09-23): say what they did, what is at stake, and the two ways
+    out: keep or drop."""
     text = GIT_REFERENCE.read_text(encoding="utf-8")
-    uncommitted = text.split("### Uncommitted work on main", 1)[1].split("\n### ", 1)[0]
-    assert "remember?" in uncommitted and "no review and no tests" in uncommitted
+    section = _section(text, "On main with a task open")
+    uncommitted = section.split("**Uncommitted work on `main`**", 1)[1].split("**Clean**", 1)[0]
     assert "**Keep the changes**" in uncommitted and "**Throw the changes away**" in uncommitted
     assert "git checkout -b <task-branch>" in uncommitted and "git restore ." in uncommitted
-    committed = text.split("### Commits on main", 1)[1].split("\n## ", 1)[0]
+    committed = section.split("**Commits on `main`**", 1)[1].split("**Uncommitted work", 1)[0]
     assert "origin/main: what GitHub has" in committed, "a graph the student can see"
     assert "**Move the commits**" in committed and "**Drop the commits**" in committed
     assert "git reset --keep origin/main" in committed
@@ -360,7 +422,21 @@ def test_git_reference_explains_merge_conflicts_from_status():
     assert "<<<<<<<" in section and "already staged" in section
     assert "Merge Editor" in section
     assert "git add <file>" in section
-    assert "e0 read <topic>" in section
+    # git.md comment (2026-09-24): a simulator that replays the student's own conflict.
+    assert "conflict.html?branch={git.branch}&other={git.mergingFrom}&file=" in section
+    assert "http.server" in section
+    assert "step by step" in section
+
+
+def test_conflict_simulator_exists_and_takes_the_students_names():
+    asset = SKILLS / "learning" / "assets" / "conflict.html"
+    html = asset.read_text(encoding="utf-8")
+    for param in ("branch", "other", "file"):
+        assert f'params.get("{param}")' in html
+    assert "CONFLICT (content): Merge conflict in" in html
+    assert "=======" in html and "HEAD" in html
+    assert "Merge Editor" in html
+    assert "<script src=" not in html and "https://" not in html, "self-contained, works offline"
 
 
 def test_learning_skill_links_its_references_from_the_repo_root():
@@ -371,13 +447,19 @@ def test_learning_skill_links_its_references_from_the_repo_root():
     assert "](references/" not in text
     assert "](.exit0/skills/learning/references/git.md)" in text
     assert "](.exit0/skills/learning/references/setup-and-update.md" in text
-    assert ".exit0/skills/learning/references/git.md" in E0_PATH.read_text(encoding="utf-8")
 
 
-def test_learning_skill_bolds_new_terms():
-    """conversation (2026-09-23): always bold a new term the first time (Git, origin, merge...)."""
+def test_learning_skill_bolds_and_defines_first_time_terms():
+    """conversation (2026-09-23): always bold a new term the first time (Git, origin, merge...).
+    git.md comment (2026-09-24): the author marks a first-time term as `term (f.t.t. definition)`
+    in any course text; the agent bolds it and says 'since this is the first time we use this
+    term, let me define it for you'. The rule lives in SKILL.md, and git.md uses the marker."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "Bold every new term" in text
+    assert "`term (f.t.t. definition)`" in text
+    assert "since this is the first time we use this term, let me define it for you" in text
+    git = GIT_REFERENCE.read_text(encoding="utf-8")
+    assert re.search(r"\*\*\w+\*\* \(f\.t\.t\. ", git), "git.md templates use the marker"
 
 
 def test_nothing_the_student_reads_says_unlock():
@@ -414,7 +496,6 @@ def test_learning_skill_never_sends_the_student_to_skill_files():
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "never link them or send the student to read them" in text
     assert "replace the branch part with [git.md]" not in text
-    assert "in your own words" in text
 
 
 def test_setup_reference_has_no_permission_nag():
@@ -428,7 +509,8 @@ def test_learning_skill_stays_compact():
     """A stated goal: the skill is as short as it can be. Raise this bound only on purpose."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert len(text.splitlines()) <= 100, "SKILL.md grew; prune before adding"
-    assert len(text) <= 7000
+    # Raised from 7000 on 2026-09-24 for the first-time-term rule and the orientation rules.
+    assert len(text) <= 7100
 
 
 def test_release_workflow_publishes_the_pinned_version():

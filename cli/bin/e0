@@ -85,9 +85,11 @@ def current_branch(root):
 _UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 
 
-def git_facts(root):
-    """What the working tree looks like, so the agent picks the right Git help without
-    looking. `unpushedCommits` is None when GitHub has no copy of the branch yet."""
+def git_facts(root, in_progress=()):
+    """Where the student stands in Git, so the agent picks the right row of git.md without
+    looking or inferring. `task` is the task in progress the branch name points at.
+    `unpushedCommits` is None when GitHub has no copy of the branch yet. `mergingFrom` is
+    the branch of a merge that stopped on conflicts, else None."""
     branch = current_branch(root)
     uncommitted, conflicts = [], []
     code, out, _ = run_git(root, "status", "--porcelain", "--untracked-files=all")
@@ -104,11 +106,18 @@ def git_facts(root):
         if code == 0 and out.isdigit():
             unpushed = int(out)
 
+    merging_from = None
+    code, out, _ = run_git(root, "name-rev", "--name-only", "--refs=refs/heads/*", "MERGE_HEAD")
+    if code == 0 and out and out != "undefined":
+        merging_from = out
+
     return {
         "branch": branch,
+        "task": task_for_branch(branch, in_progress),
         "uncommitted": uncommitted,
         "conflicts": conflicts,
         "unpushedCommits": unpushed,
+        "mergingFrom": merging_from,
     }
 
 
@@ -161,6 +170,7 @@ FRAMEWORK_SKILLS = {
         "references/setup-and-update.md",
         "references/git.md",
         "assets/checkout.html",
+        "assets/conflict.html",
     ],
 }
 
@@ -907,65 +917,9 @@ def cmd_status(args):
                 }
             )
 
-    # Task work belongs on a task branch. A task in progress while `main` is checked out
-    # means the branch step was skipped, or not taken yet.
-    git = git_facts(root)
-    branch = git["branch"]
-    git_reference = ".exit0/skills/learning/references/git.md"
-    if in_progress and branch == "main":
-        if git["unpushedCommits"]:
-            state = "committed"
-            hint = (
-                f"There are {git['unpushedCommits']} commit(s) on main that GitHub does not "
-                "have. Follow 'Commits on main' in " + git_reference + ": show the graph, say "
-                "that nobody pushes to main without review and tests, then offer move or drop."
-            )
-        elif git["uncommitted"]:
-            state = "uncommitted"
-            hint = (
-                f"Edited but not committed: {', '.join(git['uncommitted'])}. Name these files. "
-                "Follow 'Uncommitted work on main' in " + git_reference + ": say that nobody "
-                "pushes to main without review and tests, then offer keep or throw away."
-            )
-        else:
-            state = "clean"
-            hint = (
-                "Nothing is edited yet. Read " + git_reference + ", then walk the student to a "
-                "branch, one command per message. The first command is `git checkout main`; "
-                "the rest wait for its result."
-            )
-        if len(in_progress) > 1:
-            hint = (
-                "Several tasks are in progress: first ask which one they work on now, then "
-                + hint[0].lower() + hint[1:]
-            )
-        warnings.append(
-            {
-                "kind": "on_main",
-                "taskId": in_progress[0]["id"],
-                "state": state,
-                "message": (
-                    f"{', '.join(t['id'] for t in in_progress)} "
-                    f"{'is' if len(in_progress) == 1 else 'are'} in progress and the current "
-                    f"branch is main. Task work belongs on a task branch. {hint}"
-                ),
-            }
-        )
-
-    # Several tasks in progress on one branch: only a telling name says which task it is for.
-    branch_task = task_for_branch(branch, in_progress)
-    if len(in_progress) > 1 and branch and branch != "main" and branch_task is None:
-        warnings.append(
-            {
-                "kind": "unclear_branch",
-                "taskId": None,
-                "message": (
-                    f"Several tasks are in progress and the branch name '{branch}' names none "
-                    "of them. Ask which task they work on now. "
-                    "Follow 'Unclear branch' in " + git_reference + "."
-                ),
-            }
-        )
+    # Where the student stands in Git is a fact, not a warning: git.md holds one table that
+    # maps these facts to what the agent says, so nothing is said twice.
+    git = git_facts(root, in_progress)
 
     def names(tasks):
         return ", ".join(
@@ -989,11 +943,9 @@ def cmd_status(args):
         "status",
         {
             "inProgress": in_progress,
-            "next": ready,
+            "ready": ready,
             "completed": completed,
             "warnings": warnings,
-            "branch": branch,
-            "branchTask": branch_task,
             "git": git,
             "update": "unknown",
         },

@@ -20,7 +20,7 @@ def test_status_on_a_fresh_course_lists_the_ready_tasks(run_e0, initialized):
     payload, code = run_e0(["status"], initialized)
     assert code == 0
     assert "problem" not in payload
-    assert [task["id"] for task in payload["data"]["next"]] == ["T010"]
+    assert [task["id"] for task in payload["data"]["ready"]] == ["T010"]
     assert payload["data"]["inProgress"] == []
     assert payload["data"]["completed"] == []
 
@@ -31,19 +31,19 @@ def test_progress_comes_from_github_issues(run_e0, initialized, set_issues):
     payload, _ = run_e0(["status"], initialized)
     assert [task["id"] for task in payload["data"]["inProgress"]] == ["T010"]
     assert payload["data"]["inProgress"][0]["issue"]["number"] == 1
-    assert payload["data"]["next"] == []
+    assert payload["data"]["ready"] == []
     assert "T010" in payload["message"]
 
     set_issues(initialized, [("T010", "CLOSED")])
     payload, _ = run_e0(["status"], initialized)
     assert [t["id"] for t in payload["data"]["completed"]] == ["T010"]
-    assert [task["id"] for task in payload["data"]["next"]] == ["T020"]
+    assert [task["id"] for task in payload["data"]["ready"]] == ["T020"]
 
 
-def test_status_next_is_a_list_because_tasks_form_a_tree(run_e0, initialized):
+def test_status_ready_is_a_list_because_tasks_form_a_tree(run_e0, initialized):
     payload, _ = run_e0(["status"], initialized)
-    assert isinstance(payload["data"]["next"], list)
-    assert "T020" not in [task["id"] for task in payload["data"]["next"]]
+    assert isinstance(payload["data"]["ready"], list)
+    assert "T020" not in [task["id"] for task in payload["data"]["ready"]]
 
 
 def test_an_open_issue_wins_over_a_closed_one_for_the_same_task(run_e0, initialized, set_issues):
@@ -166,36 +166,33 @@ def test_status_before_init_gives_guidance(run_e0, student_repo):
     assert "init" in payload["guidance"]
 
 
-def test_status_reports_the_current_branch(run_e0, initialized, git):
+def test_status_reports_the_current_branch_once(run_e0, initialized, git):
     """conversation.md: the agent must know which branch the student is on, to catch work on
-    main and misnamed branches. The fact comes from e0, never inferred."""
+    main and misnamed branches. The fact comes from e0, never inferred, and lives in one
+    place: status.git (conversation, 2026-09-24: 'you must think simplicity')."""
     payload, _ = run_e0(["status"], initialized)
-    assert payload["data"]["branch"] == "main"
+    assert payload["data"]["git"]["branch"] == "main"
+    assert "branch" not in payload["data"] and "branchTask" not in payload["data"]
 
     git(initialized, "checkout", "-q", "-b", "<task-branch>")
     payload, _ = run_e0(["status"], initialized)
-    assert payload["data"]["branch"] == "<task-branch>"
+    assert payload["data"]["git"]["branch"] == "<task-branch>"
 
 
-def test_a_task_in_progress_on_main_is_flagged(run_e0, initialized, set_issues, git):
-    """conversation.md: task work belongs on a task branch. Nothing in progress: no warning."""
+def test_work_on_main_is_a_git_fact_not_a_warning(run_e0, initialized, set_issues, git):
+    """conversation (2026-09-24): the on_main warning said the same thing as the git.md
+    template, so the student heard it twice, and its taskId could not name several open
+    tasks. status.git carries the facts; git.md maps them to one message."""
+    set_issues(initialized, [("T010", "OPEN"), ("T020", "OPEN")])
     payload, _ = run_e0(["status"], initialized)
-    assert payload["data"]["warnings"] == []
-
-    set_issues(initialized, [("T010", "OPEN")])
-    payload, _ = run_e0(["status"], initialized)
-    kinds = {(w["kind"], w["taskId"]) for w in payload["data"]["warnings"]}
-    assert kinds == {("on_main", "T010")}
-    # evals 07 and 12: a cheap model pasted all three branch commands at once. The warning
-    # carries the first command and the pace, so there is nothing to infer.
-    message = payload["data"]["warnings"][0]["message"]
-    assert "git checkout main" in message
-    assert "one command per message" in message
-    assert ".exit0/skills/learning/references/git.md" in message
+    assert {w["kind"] for w in payload["data"]["warnings"]} <= {"dependency"}
+    assert payload["data"]["git"]["branch"] == "main"
+    assert payload["data"]["git"]["task"] is None
+    assert "git.md" not in json.dumps(payload), "no procedure in the JSON"
 
     git(initialized, "checkout", "-q", "-b", "t010-say-hello")
     payload, _ = run_e0(["status"], initialized)
-    assert payload["data"]["warnings"] == []
+    assert payload["data"]["git"]["task"] == "T010"
 
 
 def _add_origin(repo, tmp_path, git):
@@ -241,6 +238,14 @@ def test_status_reports_conflicted_files(run_e0, initialized, git):
     payload, _ = run_e0(["status"], initialized)
     assert payload["data"]["git"]["conflicts"] == ["greeting.py"]
     assert payload["data"]["git"]["uncommitted"] == []
+    # git.md comment (2026-09-24): the conflict simulator replays the student's own branches.
+    assert payload["data"]["git"]["mergingFrom"] == "main"
+    assert payload["data"]["git"]["branch"] == "t010-say-hello"
+
+
+def test_merging_from_is_null_outside_a_merge(run_e0, initialized):
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["git"]["mergingFrom"] is None
 
 
 def _git_merge_fails(repo):
@@ -248,32 +253,6 @@ def _git_merge_fails(repo):
 
     proc = subprocess.run(["git", "merge", "main"], cwd=str(repo), capture_output=True, text=True)
     return proc.returncode != 0
-
-
-def test_on_main_warning_names_what_the_student_already_did(
-    run_e0, initialized, set_issues, git, tmp_path
-):
-    """git.md comments (2026-09-23): the fix differs when nothing is edited, when files are
-    edited but not committed, and when commits sit on main that GitHub does not have."""
-    _add_origin(initialized, tmp_path, git)
-    set_issues(initialized, [("T010", "OPEN")])
-
-    def on_main():
-        payload, _ = run_e0(["status"], initialized)
-        return next(w for w in payload["data"]["warnings"] if w["kind"] == "on_main")
-
-    assert on_main()["state"] == "clean"
-
-    (initialized / "greeting.py").write_text("print('hi')\n", encoding="utf-8")
-    warning = on_main()
-    assert warning["state"] == "uncommitted"
-    assert "Uncommitted work on main" in warning["message"]
-
-    git(initialized, "add", "greeting.py")
-    git(initialized, "commit", "-q", "-m", "greet")
-    warning = on_main()
-    assert warning["state"] == "committed"
-    assert "1 commit" in warning["message"] and "Commits on main" in warning["message"]
 
 
 def test_a_task_started_out_of_order_is_flagged_until_dismissed(
@@ -301,38 +280,27 @@ def test_a_task_started_out_of_order_is_flagged_until_dismissed(
     assert "problem" in payload
 
 
-def test_several_tasks_in_progress_on_main_ask_which_one_first(run_e0, initialized, set_issues):
-    set_issues(initialized, [("T010", "OPEN"), ("T020", "OPEN")])
-    payload, _ = run_e0(["status"], initialized)
-    warning = next(w for w in payload["data"]["warnings"] if w["kind"] == "on_main")
-    assert "T010, T020" in warning["message"]
-    assert "ask which one" in warning["message"]
-
-
-def test_a_branch_that_names_no_task_is_flagged_when_several_are_in_progress(
+def test_git_task_says_which_task_in_progress_the_branch_is_for(
     run_e0, initialized, set_issues, git
 ):
     """git.md comment (2026-09-23): 'test123' with two open issues tells nobody which task
-    the work is for. A branch that holds the task id or title is fine."""
+    the work is for. A branch that holds the task id or title does. The fact is
+    status.git.task; the question to the student is git.md's."""
     set_issues(initialized, [("T010", "OPEN"), ("T020", "OPEN")])
     git(initialized, "checkout", "-q", "-b", "test123")
     payload, _ = run_e0(["status"], initialized)
-    kinds = {w["kind"] for w in payload["data"]["warnings"]}
-    assert "unclear_branch" in kinds and "on_main" not in kinds
-    assert payload["data"]["branchTask"] is None
+    assert payload["data"]["git"]["task"] is None
+    assert {w["kind"] for w in payload["data"]["warnings"]} <= {"dependency"}
 
     for name, task in (("t020-goodbye", "T020"), ("feature/say-hello", "T010")):
         git(initialized, "checkout", "-q", "-b", name)
         payload, _ = run_e0(["status"], initialized)
-        assert payload["data"]["branchTask"] == task
-        assert all(w["kind"] != "unclear_branch" for w in payload["data"]["warnings"])
+        assert payload["data"]["git"]["task"] == task
 
-    set_issues(initialized, [("T010", "OPEN")])
-    git(initialized, "checkout", "-q", "test123")
+    set_issues(initialized, [("T010", "CLOSED")])
+    git(initialized, "checkout", "-q", "feature/say-hello")
     payload, _ = run_e0(["status"], initialized)
-    assert all(w["kind"] != "unclear_branch" for w in payload["data"]["warnings"]), (
-        "one task in progress: the branch can only be for it"
-    )
+    assert payload["data"]["git"]["task"] is None, "only tasks in progress count"
 
 
 def test_status_never_says_unlock(run_e0, initialized, set_issues):
@@ -347,5 +315,5 @@ def test_status_when_all_tasks_complete(run_e0, initialized, set_issues):
     payload, _ = run_e0(["status"], initialized)
     assert "problem" not in payload
     assert payload["data"]["inProgress"] == []
-    assert payload["data"]["next"] == []
+    assert payload["data"]["ready"] == []
     assert payload["message"] == "Every task is complete."

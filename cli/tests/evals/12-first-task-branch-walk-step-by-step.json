@@ -1,18 +1,17 @@
 {
-  "from": "conversation (2026-09-23, 'i want to start'): first task, student on main. The opening explains Git with merge, not pull request, and bolds new terms. The pull is explicit (git pull origin main) with origin explained; after it ran, the agent notes with ;-) that a lone developer pulls nothing. The branch command goes out with its placeholder and a one-line 'name it for this task', no naming rules and no filled-in name until the student tried.",
-  "issues": [["T010", "OPEN"]],
+  "from": "conversation (2026-09-23, 'i want to start') and git.md comments (2026-09-24): the step-by-step walk runs right after the agent opened the first issue, in the same conversation. The opening explains Git with merge, not pull request, and bolds new terms. One command per message: checkout main first. When the student answers only 'ok', the agent trusts them and moves on to the pull (git pull origin main, origin explained) instead of insisting on the output. The branch command goes out with its placeholder and a one-line 'name it for this task', no naming rules and no filled-in name until the student tried.",
   "turns": [
     {
-      "say": "i want to start",
-      "must_run": ["e0 status"],
-      "must_match": ["\\*\\*Git\\*\\*", "merge", "git --version|git checkout main"],
-      "must_not_match": ["pull request", "git checkout -b", "git pull", "git\\.md"],
-      "must_not_run": ["git checkout", "git pull", "e0 start"]
+      "say": "let's start T010",
+      "must_run": ["e0 task T010", "e0 start T010", "gh issue create"],
+      "must_match": ["\\*\\*Git\\*\\*", "merge", "git checkout main", "content/t010/task\\.md"],
+      "must_not_match": ["pull request", "git checkout -b", "git pull", "git\\.md", "\\.exit0/skills"],
+      "must_not_run": ["git checkout", "git pull"]
     },
     {
-      "say": "git is installed and i am on main. what's next?",
+      "say": "ok",
       "must_match": ["git pull origin main", "\\*\\*origin\\*\\*"],
-      "must_not_match": ["git checkout -b", "```[^`]*git pull\\s*```"],
+      "must_not_match": ["git checkout -b", "```[^`]*git pull\\s*```", "paste the (exact )?output", "need to see"],
       "must_not_run": ["git pull", "git checkout"]
     },
     {
