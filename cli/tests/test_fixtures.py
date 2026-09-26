@@ -58,11 +58,26 @@ def test_every_dependson_and_relatedtopic_resolves():
             assert topic in topic_ids, f"{task['id']} references unknown topic {topic}"
 
 
-def test_every_task_directory_has_checks():
+def test_the_catalog_says_which_tasks_have_checks_and_questions():
+    """conversation (2026-09-26): e0 learns from the catalog whether a task has tests and
+    questions. The flag and the files must agree."""
     catalog = json.loads((FIXTURE_COURSE / "catalog.json").read_text(encoding="utf-8"))
     for task in catalog["tasks"]:
-        checks = FIXTURE_COURSE / "tasks" / task["id"].lower() / "checks" / "checks.json"
-        assert checks.exists(), f"{task['id']} has no checks.json"
+        folder = FIXTURE_COURSE / "tasks" / task["id"].lower()
+        assert "checks" in task and "questions" in task, f"{task['id']} lacks the flags"
+        assert task["checks"] == (folder / "checks" / "checks.json").exists(), task["id"]
+        has_bank = (folder / "questions.json").exists() or any(
+            (FIXTURE_COURSE / "knowledgebase" / topic / "questions.json").exists()
+            for topic in task["relatedTopics"]
+        )
+        assert task["questions"] == has_bank, task["id"]
+
+
+def test_the_pull_requests_topic_exists():
+    """The skill links content/knowledge-base/pull-requests.md when it asks for a PR."""
+    index = json.loads((FIXTURE_COURSE / "knowledgebase" / "index.json").read_text(encoding="utf-8"))
+    assert "pull-requests" in {topic["id"] for topic in index["topics"]}
+    assert (FIXTURE_COURSE / "knowledgebase" / "pull-requests" / "tutorial.md").exists()
 
 
 def test_catalog_has_course_id_and_title():

@@ -9,6 +9,7 @@ E0_PATH = ROOT / "cli" / "bin" / "e0"
 EXPECTED = {"learning"}
 SETUP_REFERENCE = SKILLS / "learning" / "references" / "setup-and-update.md"
 GIT_REFERENCE = SKILLS / "learning" / "references" / "git.md"
+WORKING_REFERENCE = SKILLS / "learning" / "references" / "working.md"
 
 # Courses hosted by e0. None of these may appear in the CLI or in a framework skill.
 COURSE_NAMES = ("polybot", "yoloservice", "mit2026", "polyaidev", "demo course")
@@ -272,9 +273,12 @@ def test_learning_skill_orients_on_every_open_task_and_skips_what_comes_next():
     # SKILL.md comments (2026-09-24): ask which open task they work on; offer a start when none
     # is open; later tasks come from the catalog, and status.next is gone.
     assert "ask which one they work on now" in text
-    assert "offer to start a ready task" in text
     assert "`status.ready`" in text and "status.next" not in text
     assert "Later tasks, when they ask: `.exit0/catalog.json`" in text
+    # conversation (2026-09-26): the offer is a template in working.md, not the agent's words.
+    nothing = _section(WORKING_REFERENCE.read_text(encoding="utf-8"), "Nothing in progress")
+    assert "Ready to start" in nothing and "Want to start one, or hear more about one first?" in nothing
+    assert "plain text" in nothing, "a task not yet fetched has no file to link"
 
 
 def test_learning_skill_handles_a_task_started_out_of_order():
@@ -311,8 +315,10 @@ def test_git_reference_has_a_template_for_every_scenario():
     linked = set(re.findall(r"\| \[([^\]]+)\]\(\.exit0/skills/learning/references/git\.md#[a-z-]+\) \|", table))
     assert linked == sections
     assert "Which scenario" not in text, "one table, in SKILL.md"
-    for section in sections:
-        assert re.search(rf"^## {re.escape(section)}$", text, re.MULTILINE), f"no section {section}"
+    # conversation (2026-09-26): Push the branch is reached from working.md, not from the table.
+    every_section = set(re.findall(r"^## (.+)$", text, re.MULTILINE)) - {"How to teach Git here"}
+    assert every_section == sections | {"Push the branch"}
+    for section in every_section:
         assert "\n> " in _section(text, section), f"{section} has no template"
     assert "the templates are the lesson" in text
 
@@ -372,11 +378,18 @@ def test_git_reference_on_main_reminds_then_splits_by_what_the_student_did():
     assert "**production**" in section and "review" in section
     assert "ask which one they work on now" in section
     assert "`unpushedCommits`" in section and "`uncommitted`" in section
-    for case in ("**Commits on `main`**", "**Uncommitted work on `main`**", "**Clean**"):
+    for case in ("**Commits on `main`**", "**Uncommitted work on `main`**", "**A branch for this task exists**", "**Clean**"):
         assert case in section, f"missing case {case}"
-    assert section.count("```bash") == 1, "the clean case is one block of three commands"
+    assert section.count("```bash") == 2, "the existing branch and the clean case, one block each"
     clean = section.split("**Clean**", 1)[1]
     assert "git checkout main\n> git pull origin main\n> git checkout -b <task-branch>" in clean
+    # conversation (2026-09-26): a student on main who already made a branch for the task is
+    # sent back to it, and stays free to start over.
+    existing = section.split("**A branch for this task exists**", 1)[1].split("**Clean**", 1)[0]
+    assert "`git.branches`" in existing
+    assert "git checkout {name}" in existing
+    assert "start over" in existing
+    assert section.index("**A branch for this task exists**") < section.index("**Clean**")
     # The old sections folded in here.
     assert "## Uncommitted work on main" not in text and "## Commits on main" not in text
     assert "The short walk" not in text and "Mistakes to catch" not in text
@@ -529,11 +542,210 @@ def test_setup_reference_has_no_permission_nag():
 def test_learning_skill_stays_compact():
     """A stated goal: the skill is as short as it can be. Raise this bound only on purpose."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
-    # Both bounds raised on 2026-09-24 when the Git table moved here from git.md.
-    assert len(text.splitlines()) <= 110, "SKILL.md grew; prune before adding"
+    # Both bounds raised on 2026-09-24 when the Git table moved here from git.md, and again on
+    # 2026-09-26 when the table grew from Git alone to the whole task flow (tests, PR, CI,
+    # review, merge, questions), every row with a root-relative link.
+    assert len(text.splitlines()) <= 125, "SKILL.md grew; prune before adding"
     # Raised from 7000 on 2026-09-24 for the first-time-term rule and the orientation rules,
-    # then to 8300 the same day for the Git table.
-    assert len(text) <= 8300
+    # then to 8300 the same day for the Git table, then to 10600 on 2026-09-26 for the flow.
+    assert len(text) <= 10600
+
+
+# ---------------------------------------------------------------- the whole task flow
+# conversation (2026-09-26): after the first conversation, every session finds the student
+# somewhere on the road from the branch to the merged PR. The skill has a row for each place,
+# the templates live in working.md, and the review and the questions are part of this skill.
+
+
+def _skill_table_rows():
+    return [row for row in _skill_git_table().splitlines()[2:]]
+
+
+def test_learning_skill_has_one_table_from_git_to_questions():
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "## Where the student stands" in text
+    assert "Pick the first row that matches" in text
+    table = _skill_git_table()
+    working = WORKING_REFERENCE.read_text(encoding="utf-8")
+    linked = re.findall(r"\]\(\.exit0/skills/learning/references/working\.md#([a-z-]+)\)", table)
+    assert set(linked) == {
+        "nothing-in-progress", "start-or-keep-working", "tests", "push-and-open-a-pull-request",
+        "ci-is-not-green", "review", "after-the-review", "close-the-issue", "comprehension-questions",
+    }
+    for anchor in set(linked):
+        title = anchor.replace("-", " ").capitalize().replace("Ci is", "CI is")
+        assert re.search(rf"^## {re.escape(title)}$", working, re.MULTILINE), f"no section {title}"
+        assert "\n> " in _section(working, title), f"{title} has no template"
+    assert "another skill" not in text, "review and questions are this skill's"
+
+
+def test_learning_skill_table_rows_come_in_the_order_of_the_flow():
+    rows = _skill_table_rows()
+
+    def row(anchor):
+        return next(i for i, r in enumerate(rows) if f"#{anchor})" in r)
+
+    assert row("git-is-missing") < row("merge-conflict") < row("the-branch-step-by-step")
+    assert row("comprehension-questions") < row("nothing-in-progress"), "questions first, then the next task"
+    # A merged or open PR decides before the branch does: a student on main after a merge is
+    # not told off for being on main.
+    assert row("close-the-issue") < row("ci-is-not-green") < row("review") < row("after-the-review")
+    assert row("after-the-review") < row("on-main-with-a-task-open")
+    assert row("on-main-with-a-task-open") < row("tests") < row("start-or-keep-working")
+    assert rows[-1].count("#start-or-keep-working") == 1, "the quiet case is the last row"
+
+
+def test_learning_skill_reads_every_fact_status_gives():
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    for fact in ("`branches`", "`branchCommits`", "`checks`", "`lastRun`", "`pr`", "`reviews`", "`questions`", "`command`"):
+        assert fact in text, f"skill does not mention {fact}"
+    assert "pr.checks" in text and "pr.reviews" in text and "pr.merged" in text
+    assert "checks.lastRun.passing" in text
+
+
+def test_learning_skill_runs_status_again_when_the_student_reports_a_step():
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Run `e0 status` again whenever the student reports a step done" in text
+
+
+def test_learning_skill_sends_the_template_before_acting():
+    """eval 24 (2026-09-26): with CI red, haiku skipped the template, ran the checks, wrote the
+    code, committed and pushed. The template comes first; the fix is the student's."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "send its template, before you run or fix anything" in text
+    ci = _section(WORKING_REFERENCE.read_text(encoding="utf-8"), "CI is not green")
+    assert "Send the template first" in ci
+    assert "The fix is the student's" in ci
+
+
+def test_learning_skill_never_refuses_a_task():
+    """eval 29 (2026-09-26): haiku refused 'let's start T020' because T020 was not in
+    status.ready. Ready is advice; any task can be started, with the dependency warning said."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Any task, ready or not" in text
+    assert "Never refuse a task" in text
+    assert text.index("Never refuse a task") < text.index("Your task is ready:")
+
+
+def test_working_reference_splits_start_from_keep_working():
+    """conversation (2026-09-26): clean branch and tree: 'start'. Commits or edits: 'keep
+    working'. Then the conversation is about the code, not the workflow."""
+    section = _section(WORKING_REFERENCE.read_text(encoding="utf-8"), "Start or keep working")
+    assert "`git.branchCommits` is 0 and `git.uncommitted` is empty" in section
+    assert "Want to start working on it?" in section
+    assert "Want to keep working on it?" in section
+    assert "`checks.lastRun`" in section
+    assert "the conversation is about their code" in section
+    assert "Leave the workflow alone" in section
+    assert "[task.md](content/{id}/task.md)" in section
+    assert "fresh clone" in section, "content/ is gitignored; the file may be gone"
+
+
+def test_working_reference_tests_are_run_by_the_student_and_read_by_e0():
+    """conversation (2026-09-26): the agent cannot know the student finished; the recorded
+    test run can. No tests: ask. Passing: on to the PR. Failing: back to the code."""
+    section = _section(WORKING_REFERENCE.read_text(encoding="utf-8"), "Tests")
+    assert "You cannot see that they did" in section
+    assert "`checks` is null" in section and "no automatic tests" in section
+    assert "`checks.lastRun.passing` is true" in section
+    assert "{checks.command}" in section
+    assert "The run saves its result, so I can see it too" in section
+    assert "**school checks** (f.t.t. " in section
+    assert "{failedTests}" in section
+    assert "`e0 check` runs the same tests" in section
+    skill = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "The student runs `checks.command`" in skill
+
+
+def test_working_reference_push_then_pull_request_with_the_tutorial_link():
+    """conversation (2026-09-26): push first (git.md), then 'open a pull request' as a link to
+    the knowledge base document, fetched the same way as any tutorial."""
+    text = WORKING_REFERENCE.read_text(encoding="utf-8")
+    section = _section(text, "Push and open a pull request")
+    assert "[Push the branch](git.md#push-the-branch)" in section
+    assert "`e0 read pull-requests`" in section
+    assert "content/knowledge-base/pull-requests.md" in section
+    assert "[open a pull request](content/knowledge-base/pull-requests.md)" in section
+    assert "**pull request** (f.t.t. " in section
+    assert "`[{id}] {title}`" in section and "Closes #{issue number}" in section
+    assert "without the link" in section, "a course may lack the topic"
+    assert "run `e0 status`" in section
+    git = GIT_REFERENCE.read_text(encoding="utf-8")
+    push = _section(git, "Push the branch")
+    assert "git push -u origin {branch}" in push
+    assert "**push** (f.t.t. " in push
+    assert "`-u`" in push and "twin" in push
+    assert "git add {files}" in push and "git commit -m" in push, "uncommitted work is committed first"
+
+
+def test_working_reference_ci_must_be_green_before_the_review():
+    text = WORKING_REFERENCE.read_text(encoding="utf-8")
+    section = _section(text, "CI is not green")
+    assert "`failing` or `pending`" in section
+    assert "**CI** (f.t.t. " in section
+    assert "merged only when its checks pass" in section
+    assert "**Details**" in section
+    assert "Give it a minute" in section
+    assert "{pr.branch}" in section
+
+
+def test_working_reference_reviews_against_the_task_rules_only_through_e0():
+    """conversation (2026-09-26): not a general code review; the rules of the task are the whole
+    standard, they never touch the disk, the review is posted through e0 and counted by status."""
+    text = WORKING_REFERENCE.read_text(encoding="utf-8")
+    section = _section(text, "Review")
+    assert "`pr.reviews` is 0" in section
+    assert "the student does not need to ask" in section
+    assert "`e0 review <id>`" in section
+    assert "`data.rules.course` and `data.rules.task` are the whole standard" in section
+    assert "nothing else" in section and "no general best practices" in section
+    assert "one bullet per rule" in section
+    assert "`e0 post-review <id> .exit0/review.md`" in section
+    assert "gh pr review" not in text, "posting goes through e0"
+    assert "ask for a review again" in section
+    after = _section(text, "After the review")
+    assert "`pr.reviews` is above 0" in after
+    assert "**Merge pull request**" in after and "**Confirm merge**" in after
+
+
+def test_working_reference_closes_the_issue_after_the_merge():
+    section = _section(WORKING_REFERENCE.read_text(encoding="utf-8"), "Close the issue")
+    assert "`pr` is merged and its issue is still open" in section
+    assert "gh issue close {issue number}" in section
+    assert "Closed issue = task complete" in section
+
+
+def test_working_reference_asks_personalized_questions_and_records_them_on_the_issue():
+    """conversation (2026-09-26): canonical questions, asked as if about the student's own code
+    ('In init.sh line 4 you used |'), with the agent's question tool, recorded on the issue,
+    and recorded as skipped when declined so they are not asked again."""
+    section = _section(WORKING_REFERENCE.read_text(encoding="utf-8"), "Comprehension questions")
+    assert "`questions` `pending`" in section
+    assert "`e0 questions <id>`" in section
+    assert "`mcq` (`options`, `answer`)" in section and "`open` (`outline`)" in section
+    assert "question tool" in section
+    assert "one question at a time" in section
+    assert "name the file and line from `data.diff`" in section
+    assert "In `init.sh`, line 4, you used `|`" in section
+    assert "The options stay word for word" in section
+    assert "The idea the question tests never changes" in section
+    assert "`e0 record <id> .exit0/questions.md`" in section
+    assert "Skipped by the student" in section and "not asked again" in section
+    assert "correct | wrong | discussed | skipped" in section
+    assert "Ready?" in section
+
+
+def test_working_reference_is_templates_with_no_maintainer_comments():
+    text = WORKING_REFERENCE.read_text(encoding="utf-8")
+    assert not re.search(r"\{\s", text), "a maintainer comment ({ ... }) was left in the reference"
+    assert "Templates are what you send" in text
+
+
+def test_learning_skill_lets_e0_post_the_review_and_the_record():
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    guardrails = _section(text, "Guardrails")
+    assert "what `e0` posts for you (the review, the record of the questions)" in guardrails
+    assert "merge" in guardrails, "the student merges"
 
 
 def test_release_workflow_publishes_the_pinned_version():

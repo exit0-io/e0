@@ -1,0 +1,24 @@
+{
+  "from": "conversation (2026-09-26), scenario 3: the student wants a later task first. Recommend the order, name what they skip, but open the task anyway; no hard block.",
+  "turns": [
+    {
+      "say": "let's start T020",
+      "must_run": [
+        "e0 task T020",
+        "e0 start T020",
+        "gh issue create"
+      ],
+      "must_match": [
+        "T010",
+        "content/t020/task\\.md",
+        "issues/1"
+      ],
+      "must_not_match": [
+        "cannot|can't start|not allowed|first complete"
+      ],
+      "must_not_run": [
+        "git checkout"
+      ]
+    }
+  ]
+}

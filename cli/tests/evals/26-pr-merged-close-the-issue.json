@@ -1,0 +1,38 @@
+{
+  "from": "conversation (2026-09-26): the PR is merged and the issue is still open. The last step of the task is closing the issue, by the student.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "prs": [
+    [
+      "T010",
+      "MERGED"
+    ]
+  ],
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "merged it!",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "close",
+        "issues/1|gh issue close 1"
+      ],
+      "must_not_match": [
+        "never work on it directly",
+        "production"
+      ],
+      "must_not_run": [
+        "gh issue close",
+        "e0 questions"
+      ]
+    }
+  ]
+}

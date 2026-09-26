@@ -1,0 +1,35 @@
+{
+  "from": "conversation (2026-09-26): the comprehension check is recorded on the issue, so it is not asked again; the agent offers the next task.",
+  "issues": [
+    {
+      "task": "T010",
+      "state": "CLOSED",
+      "questions_recorded": true
+    }
+  ],
+  "prs": [
+    [
+      "T010",
+      "MERGED"
+    ]
+  ],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "T020|Say goodbye"
+      ],
+      "must_not_match": [
+        "question"
+      ],
+      "must_not_run": [
+        "e0 questions",
+        "e0 record",
+        "e0 start"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "from": "conversation (2026-09-26), scenario 2: open issue, student on main, a branch for that task already exists. Remind about main, then suggest going back to that branch; the student runs the command and may choose a fresh branch instead.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "branches": [
+    "t010-say-hello"
+  ],
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "main",
+        "git checkout t010-say-hello",
+        "fresh|start over|new branch"
+      ],
+      "must_not_match": [
+        "checkout -b <task-branch>"
+      ],
+      "must_not_run": [
+        "git checkout",
+        "git branch"
+      ]
+    }
+  ]
+}
