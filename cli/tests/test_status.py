@@ -310,6 +310,120 @@ def test_status_never_says_unlock(run_e0, initialized, set_issues):
     assert "unlock" not in json.dumps(payload).lower()
 
 
+# ---------------------------------------------------------------- the working part of a task
+# conversation (2026-09-26): the agent must know, without inferring, whether the student has
+# started on the branch, whether the tests passed, where the PR stands, and whether the
+# questions were asked.
+
+
+def test_status_counts_the_commits_on_the_task_branch(run_e0, initialized, git):
+    """'start' when the branch is fresh, 'keep working' when it holds commits or edits."""
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["git"]["branchCommits"] == 0, "main is the baseline"
+
+    git(initialized, "checkout", "-q", "-b", "t010-say-hello")
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["git"]["branchCommits"] == 0
+
+    (initialized / "greeting.py").write_text("x\n", encoding="utf-8")
+    git(initialized, "add", "greeting.py")
+    git(initialized, "commit", "-q", "-m", "greet")
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["git"]["branchCommits"] == 1
+
+
+def test_status_lists_local_branches_with_their_tasks(run_e0, initialized, set_issues, git):
+    """conversation (2026-09-26): on main with an open issue, the agent suggests the branch the
+    student already made for that task, if there is one, instead of a new one."""
+    set_issues(initialized, [("T010", "OPEN")])
+    git(initialized, "branch", "t010-say-hello")
+    git(initialized, "branch", "scratch")
+    payload, _ = run_e0(["status"], initialized)
+    branches = {b["name"]: b["task"] for b in payload["data"]["git"]["branches"]}
+    assert branches == {"main": None, "t010-say-hello": "T010", "scratch": None}
+
+
+def test_status_reports_the_tests_of_a_task_in_progress(run_e0, initialized, set_issues, write_task_file):
+    """The catalog says whether a task has checks; e0 says the command and the last run."""
+    set_issues(initialized, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    checks = payload["data"]["inProgress"][0]["checks"]
+    assert checks == {"command": None, "lastRun": None}, "not downloaded yet: e0 does not guess"
+
+    write_task_file(initialized, "T010")
+    payload, _ = run_e0(["status"], initialized)
+    checks = payload["data"]["inProgress"][0]["checks"]
+    assert checks["command"] == "python3 -m pytest tests/school-checks/t010 -v"
+    assert checks["lastRun"] is None
+
+
+def test_a_task_without_checks_says_so(run_e0, initialized, set_issues, make_course_dir, content_server):
+    payload, _ = run_e0(["status"], initialized)  # sanity: the fixture course has checks
+    import json as _json
+
+    catalog_path = initialized / ".exit0" / "catalog.json"
+    catalog = _json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["tasks"][0]["checks"] = False
+    catalog["tasks"][0]["questions"] = False
+    catalog_path.write_text(_json.dumps(catalog), encoding="utf-8")
+
+    set_issues(initialized, [("T010", "OPEN")])
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["inProgress"][0]["checks"] is None
+
+    set_issues(initialized, [("T010", "CLOSED")])
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["completed"][0]["questions"] is None
+
+
+def test_status_reports_the_pull_request_ci_and_reviews(run_e0, initialized, set_issues, set_prs):
+    from conftest import CI_FAILING, CI_PASSING, CI_PENDING
+
+    set_issues(initialized, [("T010", "OPEN")])
+    set_prs(initialized, [("T010", "OPEN")])
+    pr = run_e0(["status"], initialized)[0]["data"]["inProgress"][0]["pr"]
+    assert pr["checks"] == "none" and pr["reviews"] == 0
+    assert pr["branch"] == "t010-my-solution"
+
+    for rollup, verdict in ((CI_PENDING, "pending"), (CI_FAILING, "failing"), (CI_PASSING, "passing")):
+        set_prs(initialized, [("T010", "OPEN", {"statusCheckRollup": rollup})])
+        pr = run_e0(["status"], initialized)[0]["data"]["inProgress"][0]["pr"]
+        assert pr["checks"] == verdict, verdict
+
+    reviews = [{"body": "looks fine", "state": "COMMENTED"}, {"body": "<!-- e0:review -->\n## Review", "state": "COMMENTED"}]
+    set_prs(initialized, [("T010", "OPEN", {"statusCheckRollup": CI_PASSING, "reviews": reviews})])
+    pr = run_e0(["status"], initialized)[0]["data"]["inProgress"][0]["pr"]
+    assert pr["reviews"] == 1, "only Exit0 reviews count"
+
+
+def test_ci_verdict_reads_both_rollup_shapes(e0mod):
+    assert e0mod.ci_verdict([]) == "none"
+    assert e0mod.ci_verdict(None) == "none"
+    assert e0mod.ci_verdict([{"__typename": "StatusContext", "state": "SUCCESS"}]) == "passing"
+    assert e0mod.ci_verdict([{"__typename": "StatusContext", "state": "PENDING"}]) == "pending"
+    assert e0mod.ci_verdict([{"__typename": "CheckRun", "status": "QUEUED", "conclusion": None}]) == "pending"
+    assert e0mod.ci_verdict([{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SKIPPED"}]) == "passing"
+    assert e0mod.ci_verdict([
+        {"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": None},
+        {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"},
+    ]) == "failing", "one failure decides, whatever else is still running"
+
+
+def test_status_reports_whether_the_questions_were_recorded(run_e0, initialized, set_issues):
+    """The record is a marked comment on the issue: nothing local, readable from any clone."""
+    set_issues(initialized, [("T010", "CLOSED")])
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["completed"][0]["questions"] == "pending"
+
+    set_issues(
+        initialized,
+        [{"number": 1, "title": "[T010] Say hello", "state": "CLOSED", "url": "u",
+          "comments": [{"body": "nice"}, {"body": "<!-- e0:questions -->\n2 of 3 correct"}]}],
+    )
+    payload, _ = run_e0(["status"], initialized)
+    assert payload["data"]["completed"][0]["questions"] == "done"
+
+
 def test_status_when_all_tasks_complete(run_e0, initialized, set_issues):
     set_issues(initialized, [("T010", "CLOSED"), ("T020", "CLOSED")])
     payload, _ = run_e0(["status"], initialized)

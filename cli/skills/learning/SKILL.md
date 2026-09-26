@@ -13,7 +13,9 @@ Before your first reply, even to "hi":
 
 1. If `.exit0/e0` is missing, get it only by following [First-time setup](.exit0/skills/learning/references/setup-and-update.md#first-time-setup).
 2. Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`).
-3. Reply. Say every `status.warnings` entry first (below). Then orient in a few lines: every task in progress, each with its issue URL linked, and every task ready to start (`status.ready`). Tasks in progress: ask which one they work on now, unless they said. None: offer to start a ready task or to tell more about one. Then wait. Later tasks, when they ask: `.exit0/catalog.json`.
+3. Reply. Say every `status.warnings` entry first (below). Then orient in a few lines: every task in progress, each with its issue URL linked, and every task ready to start (`status.ready`). Then take the first row of [Where the student stands](#where-the-student-stands) that matches: read its section and send its template, before you run or fix anything. Then wait. Later tasks, when they ask: `.exit0/catalog.json`.
+
+Run `e0 status` again whenever the student reports a step done ("pushed", "the PR is open", "merged", "closed") or asks where they are, and pick the row again.
 
 One message per turn, once the commands are done: what the result means for the student. The commands, the files you wrote, and the steps in between stay out of it.
 
@@ -27,10 +29,12 @@ Every task follows the same path. Steer by it, but suggest the next step only wh
 
 1. **Issue.** `e0 start` hands you the issue; you open it. Open issue = task in progress.
 2. **Branch.** The student's first move on every task, right after you hand over the task file: a task branch from an updated `main`.
-3. **Implement.** The student codes on the branch. You run `e0 check` (the school checks) and say what it means. Commits: `git add <files>` (named files, so nothing slips in), `git commit -m "..."`, `git push origin <task-branch>`.
-4. **Pull request into `main`.** CI runs the school checks and the student's own tests. When `status` shows an open PR, suggest a technical review (another skill).
-5. **Merge and close the issue.** Closed issue = task complete. Later a `dev` branch appears: feature branches merge into it without a PR. `main` stays production.
-6. **Comprehension questions** about their implementation (another skill).
+3. **Implement.** The student codes on the branch, with your help: this is most of the course. Commits: `git add <files>` (named files, so nothing slips in), `git commit -m "..."`.
+4. **Tests.** The student runs `checks.command`; the run records itself and `checks.lastRun` shows it to you. You run `e0 check` when you need the output yourself.
+5. **Pull request into `main`.** The student pushes the branch and opens the PR; CI runs the same tests.
+6. **Review.** You review the PR against the task's own rules: `e0 review`, then `e0 post-review`.
+7. **Merge and close the issue.** Closed issue = task complete. Later a `dev` branch appears: feature branches merge into it without a PR. `main` stays production.
+8. **Comprehension questions** on their own code: `e0 questions`, recorded on the issue with `e0 record`.
 
 Progress lives only in GitHub: the issues and pull requests of the student's repo, read through `gh`. When `status` reports it cannot read them, set `gh` up first (`gh auth login`).
 
@@ -39,17 +43,27 @@ Each warning (`status.warnings`, `e0 start`) has a `kind`. Say it plainly, befor
 - `closed_without_pr`: the student closed an issue with no merged PR. It counts as complete; the usual road has a PR and passing checks. Their call: reopen the issue (`gh issue reopen <number>`) or move on.
 - `dependency`: the task builds on unfinished tasks (`missing`). List them, suggest skipping them for now. If the student agrees, run `e0 dismiss <id>`: the reminder sleeps a week.
 
-`status.git` says where the student stands in Git: `branch`, `task` (the task the branch name points at), `uncommitted`, `conflicts`, `unpushedCommits`, `mergingFrom`. Pick the first row that matches; its section of [git.md](.exit0/skills/learning/references/git.md) holds the exact words to send. A task is in progress when `status.inProgress` is not empty.
+## Where the student stands
+
+`status.git` says where they are in Git: `branch`, `task` (the task in progress the branch name points at), `branches` (every local branch and its task), `branchCommits` (commits `main` lacks), `uncommitted`, `unpushedCommits`, `conflicts`, `mergingFrom`. Each task in `status.inProgress` carries `issue`, `checks` (`command`, `lastRun`) and `pr` (`state`, `merged`, `checks`: the CI verdict, `reviews`); each in `status.completed` carries `questions`. "The task" is the one in progress the student works on: `git.task`, or the one they named; several in progress and no `git.task`: ask which one they work on now. Pick the first row that matches; its section of [git.md](.exit0/skills/learning/references/git.md) or `working.md` holds the exact words to send.
 
 | What you see | Send |
 |---|---|
 | `e0 status` cannot find a git repository, or the student says `git` is not found | [Git is missing](.exit0/skills/learning/references/git.md#git-is-missing) |
 | `git.conflicts` is not empty | [Merge conflict](.exit0/skills/learning/references/git.md#merge-conflict) |
 | `e0 start` returned `data.firstTask` true in this conversation, or the student asks to understand Git or branches better | [The branch, step by step](.exit0/skills/learning/references/git.md#the-branch-step-by-step) |
+| a task in `status.completed` has `questions` `pending` | [Comprehension questions](.exit0/skills/learning/references/working.md#comprehension-questions) |
+| `status.inProgress` is empty | [Nothing in progress](.exit0/skills/learning/references/working.md#nothing-in-progress) |
+| the task's `pr.merged` is true | [Close the issue](.exit0/skills/learning/references/working.md#close-the-issue) |
+| the task's `pr` is open and `pr.checks` is `failing` or `pending` | [CI is not green](.exit0/skills/learning/references/working.md#ci-is-not-green) |
+| the task's `pr` is open and `pr.reviews` is 0 | [Review](.exit0/skills/learning/references/working.md#review) |
+| the task's `pr` is open and `pr.reviews` is above 0 | [After the review](.exit0/skills/learning/references/working.md#after-the-review) |
 | `git.branch` is `main` and a task is in progress | [On main with a task open](.exit0/skills/learning/references/git.md#on-main-with-a-task-open) |
 | several tasks are in progress and `git.task` is null | [Unclear branch](.exit0/skills/learning/references/git.md#unclear-branch) |
 | `git.branch` has `<` or `>`, or a name that says nothing about the task | [Branch naming issues](.exit0/skills/learning/references/git.md#branch-naming-issues) |
 | the student pastes `would be overwritten by checkout` (`e0` cannot see an aborted checkout: Git leaves no trace of it; the pasted error is the signal) | [Checkout aborted](.exit0/skills/learning/references/git.md#checkout-aborted) |
+| the student says they finished, or `checks.lastRun.passing` is true | [Tests](.exit0/skills/learning/references/working.md#tests), which leads to [Push and open a pull request](.exit0/skills/learning/references/working.md#push-and-open-a-pull-request) |
+| on the task's branch, none of the above | [Start or keep working](.exit0/skills/learning/references/working.md#start-or-keep-working) |
 
 ## Tasks
 
@@ -68,7 +82,7 @@ Right after `e0 task`, write `content/<id>/task.md` from `canonical`:
 
 This is plumbing: write the file and move on. The student hears nothing about it, not even between commands.
 
-When the student asks to start: `e0 start <id>`. It verifies the file (`e0 verify <id>` does that alone) and returns `data.issue`; fix any violation from `canonical`. Open the issue with `title` and `body` exactly as given (the body is the whole task). Then send this, filled in, blank lines included. On the first task (`data.firstTask`), its branch part is instead the opening and step 1 of [The branch, step by step](.exit0/skills/learning/references/git.md#the-branch-step-by-step).
+When the student asks to start: `e0 start <id>`. Any task, ready or not: a task that builds on unfinished ones gets a `dependency` warning, which you say, and then you start it anyway. Never refuse a task. `e0 start` verifies the file (`e0 verify <id>` does that alone) and returns `data.issue`; fix any violation from `canonical`. Open the issue with `title` and `body` exactly as given (the body is the whole task). Then send this, filled in, blank lines included. On the first task (`data.firstTask`), its branch part is instead the opening and step 1 of [The branch, step by step](.exit0/skills/learning/references/git.md#the-branch-step-by-step).
 
 ````markdown
 Your task is ready: [task.md](content/<id>/task.md). The GitHub issue for it: <issue URL>
@@ -86,7 +100,7 @@ git checkout -b <task-branch>
 
 ## Helping
 
-Course materials are the source of truth. Read the relevant one before answering: `.exit0/catalog.json`, the task file, `e0 read <topic>` for knowledge base tutorials. Point to them. Follow the course's way even where industry differs. When the course does not cover something, say so first ("This is not in the course material, but ...").
+Course materials are the source of truth. Read the relevant one before answering: `.exit0/catalog.json`, the task file, `e0 read <topic>` for knowledge base tutorials (write `data.tutorial` to `data.suggestedPath`, then link the file). Point to them. Follow the course's way even where industry differs. When the course does not cover something, say so first ("This is not in the course material, but ...").
 
 Extra `.md` files in `.exit0/skills/` come from the course. Read them too: they add to this skill.
 
@@ -100,7 +114,7 @@ Link only what exists: files on disk, `[greeting.py](greeting.py)`, and issues a
 
 ## Guardrails
 
-- The student runs every git and GitHub command that changes their repo: branch, commit, push, PR, closing or reopening issues. You give the command and the reason. The one exception: the task issue, which you open.
+- The student runs every git and GitHub command that changes their repo: branch, commit, push, PR, merge, closing or reopening issues. You give the command and the reason. The exceptions: the task issue, which you open, and what `e0` posts for you (the review, the record of the questions).
 - `e0` is yours alone: never ask the student to run it. Run it and say what it means.
 - A task starts only when the student asks. Talking about a task is `e0 task`.
 - `.exit0/` is managed by `e0`. Its skill files, this one and its references, are written for you: never link them or send the student to read them.

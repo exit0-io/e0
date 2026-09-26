@@ -1,0 +1,47 @@
+{
+  "from": "conversation (2026-09-26), scenario 4: the branch holds commits, so the word is 'keep working', and the last recorded test run is reported.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "commits": {
+    "greeting.py": "def greet(name):\n    return 'Hello ' + name\n"
+  },
+  "results": {
+    "T010": {
+      "passed": 0,
+      "failed": 1,
+      "failedTests": [
+        "test_greeting.py::test_greet_returns_expected_string"
+      ]
+    }
+  },
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "keep working|continue",
+        "1 commit|commit",
+        "test_greet_returns_expected_string|1 of 1|0 of 1"
+      ],
+      "must_not_match": [
+        "checkout -b",
+        "production",
+        "pull request"
+      ],
+      "must_not_run": [
+        "git checkout",
+        "python3? -m pytest"
+      ]
+    }
+  ]
+}
