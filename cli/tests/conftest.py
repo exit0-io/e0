@@ -36,11 +36,24 @@ _COVERAGE_CFG = str(FRAMEWORK_SRC / "setup.cfg")
 
 ISSUES_FILE = ".fake-gh-issues.json"
 PRS_FILE = ".fake-gh-prs.json"
+DIFF_FILE = ".fake-gh-diff.txt"
+
+DEFAULT_DIFF = """diff --git a/greeting.py b/greeting.py
+new file mode 100644
+--- /dev/null
++++ b/greeting.py
+@@ -0,0 +1,2 @@
++def greet(name):
++    return f"Hello, {name}!"
+"""
 
 # A stand-in for the GitHub CLI, good enough for e0 and for the agent evals.
 #   gh issue list / gh pr list  -> print the records in <repo>/.fake-gh-issues.json or
 #                                  .fake-gh-prs.json (an empty list if the file is missing)
 #   gh issue create             -> append an OPEN issue and print its URL, like the real one
+#   gh issue comment N          -> append a comment to issue N and print its URL
+#   gh pr diff N                -> print <repo>/.fake-gh-diff.txt, or a small default diff
+#   gh pr review N --comment    -> append a review to PR N
 #   gh auth status              -> succeed
 # A .fake-gh-issues.json holding {"error": "..."} makes every command fail the way a
 # logged-out gh would. The files live at the git root, so cwd inside the repo is fine.
@@ -63,6 +76,19 @@ def load(name):
 def save(name, data):
     json.dump(data, open(os.path.join(root(), name), "w", encoding="utf-8"))
 
+def body_from(args):
+    for i, a in enumerate(args):
+        if a in ("--body", "-b"): return args[i + 1]
+        if a in ("--body-file", "-F"): return open(args[i + 1], encoding="utf-8").read()
+    return ""
+
+def find(records, number):
+    for record in records:
+        if str(record.get("number")) == str(number):
+            return record
+    print("fake gh: no record #" + str(number), file=sys.stderr)
+    sys.exit(1)
+
 issues = load({ISSUES_FILE!r})
 if isinstance(issues, dict) and "error" in issues:
     print(issues["error"], file=sys.stderr)
@@ -74,16 +100,29 @@ if args[:2] == ["issue", "list"]:
 elif args[:2] == ["pr", "list"]:
     print(json.dumps(load({PRS_FILE!r})))
 elif args[:2] == ["issue", "create"]:
-    title = body = ""
+    title = ""
     for i, a in enumerate(args):
         if a in ("--title", "-t"): title = args[i + 1]
-        if a in ("--body", "-b"): body = args[i + 1]
-        if a in ("--body-file", "-F"): body = open(args[i + 1], encoding="utf-8").read()
     number = max([i.get("number", 0) for i in issues] + [0]) + 1
     url = f"https://github.com/student/repo/issues/{{number}}"
-    issues.append({{"number": number, "title": title, "state": "OPEN", "url": url, "body": body}})
+    issues.append({{"number": number, "title": title, "state": "OPEN", "url": url, "body": body_from(args)}})
     save({ISSUES_FILE!r}, issues)
     print(url)
+elif args[:2] == ["issue", "comment"]:
+    issue = find(issues, args[2])
+    comments = issue.setdefault("comments", [])
+    comments.append({{"body": body_from(args), "author": {{"login": "student"}}}})
+    save({ISSUES_FILE!r}, issues)
+    print(issue["url"] + "#issuecomment-" + str(len(comments)))
+elif args[:2] == ["pr", "diff"]:
+    path = os.path.join(root(), {DIFF_FILE!r})
+    print(open(path, encoding="utf-8").read() if os.path.exists(path) else {DEFAULT_DIFF!r})
+elif args[:2] == ["pr", "review"]:
+    prs = load({PRS_FILE!r})
+    pr = find(prs, args[2])
+    pr.setdefault("reviews", []).append(
+        {{"body": body_from(args), "state": "COMMENTED", "author": {{"login": "student"}}}})
+    save({PRS_FILE!r}, prs)
 elif args[:2] == ["auth", "status"]:
     print("Logged in to github.com as student")
 else:
@@ -137,18 +176,29 @@ def set_prs():
         records = []
         for index, item in enumerate(prs, start=101):
             if isinstance(item, tuple):
-                task_id, state = item
+                task_id, state, *extra = item
                 item = {
                     "number": index,
                     "title": f"[{task_id}] my solution",
                     "state": state,
                     "url": f"https://github.com/student/repo/pull/{index}",
                     "body": "",
+                    "headRefName": f"{task_id.lower()}-my-solution",
+                    **(extra[0] if extra else {}),
                 }
             records.append(item)
         (pathlib.Path(repo) / PRS_FILE).write_text(json.dumps(records), encoding="utf-8")
 
     return _set
+
+
+# Shapes gh gives statusCheckRollup in, for tests and evals: a CheckRun and a StatusContext.
+CI_PASSING = [{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+CI_FAILING = [
+    {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    {"__typename": "StatusContext", "state": "FAILURE"},
+]
+CI_PENDING = [{"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": None}]
 
 
 @pytest.fixture

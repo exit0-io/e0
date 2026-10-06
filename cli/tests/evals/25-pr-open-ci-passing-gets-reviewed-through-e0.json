@@ -1,0 +1,42 @@
+{
+  "from": "conversation (2026-09-26): CI is green and no review yet. The agent reviews through e0 review (the task's rules only), posts through e0 post-review, and summarizes in chat with the PR link.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "prs": [
+    {
+      "task": "T010",
+      "state": "OPEN",
+      "checks": "passing"
+    }
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "the PR is open",
+      "must_run": [
+        "e0 status",
+        "e0 review T010",
+        "e0 post-review T010"
+      ],
+      "must_match": [
+        "pull/101",
+        "review"
+      ],
+      "must_not_match": [
+        "rules\\.md",
+        "\\be0 \\w+"
+      ],
+      "must_not_run": [
+        "gh pr review",
+        "gh pr comment"
+      ]
+    }
+  ]
+}

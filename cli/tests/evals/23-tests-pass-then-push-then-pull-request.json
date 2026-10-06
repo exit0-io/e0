@@ -1,0 +1,56 @@
+{
+  "from": "conversation (2026-09-26): the student finished and the recorded run passes. First the push, one command the student runs; after 'pushed', the pull request, with 'open a pull request' linking the knowledge base document fetched through e0 read.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "branch": "t010-say-hello",
+  "remote": true,
+  "fetch": [
+    "T010"
+  ],
+  "commits": {
+    "greeting.py": "def greet(name):\n    return f'Hello, {name}!'\n"
+  },
+  "results": {
+    "T010": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "turns": [
+    {
+      "say": "i'm done, the tests pass",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "git push -u origin t010-say-hello"
+      ],
+      "must_not_match": [
+        "gh pr create"
+      ],
+      "must_not_run": [
+        "git push",
+        "gh pr create"
+      ]
+    },
+    {
+      "say": "pushed",
+      "must_run": [
+        "e0 read pull-requests"
+      ],
+      "must_match": [
+        "\\[open a pull request\\]\\(content/knowledge-base/pull-requests\\.md\\)",
+        "\\[T010\\]",
+        "Closes #1"
+      ],
+      "must_not_run": [
+        "gh pr create",
+        "git push"
+      ]
+    }
+  ]
+}

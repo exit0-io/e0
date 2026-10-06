@@ -1,0 +1,41 @@
+{
+  "from": "conversation (2026-09-26): the PR is open but CI is red. The student is told the checks must pass before anything else; no review is posted (e0 review itself refuses while CI is not green), and the fix is the student's: no git commands by the agent.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "prs": [
+    {
+      "task": "T010",
+      "state": "OPEN",
+      "checks": "failing"
+    }
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "i opened the PR, can you review it?",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "pull/101",
+        "CI",
+        "fail|red",
+        "Details"
+      ],
+      "must_not_run": [
+        "e0 post-review",
+        "gh pr review",
+        "git add",
+        "git commit",
+        "git push"
+      ]
+    }
+  ]
+}

@@ -102,6 +102,14 @@ For 1: `git branch <task-branch>` (a new branch that points at the commits), `gi
 
 For 1: `git checkout -b <task-branch>` (replace the placeholder with a meaningful name). For 2: `git restore .` (edited files go back to what `main` has; new files they delete by hand), then `git checkout -b <task-branch>`.
 
+**A branch for this task exists** (`git.branches` has an entry whose `task` is this task):
+
+> You already have a branch for this task: `{name}`. Let's go back to it:
+> ```bash
+> git checkout {name}
+> ```
+> Your work there is waiting for you. If you would rather start over on a fresh branch, tell me and we will make one.
+
 **Clean** (nothing above matched):
 
 > To create your branch from an up-to-date `main`:
@@ -132,6 +140,26 @@ Then, if the branch holds work for that task, [rename it](#branch-naming-issues)
 > ```
 
 - **The name says nothing about the task.** A good name is short, lowercase, hyphens, and says which task: `t010-say-hello`. The whole team reads it. Say what to change and give the same rename command.
+
+## Push the branch
+
+The tests pass and the work is committed, or the student is ready to send it in. `git.uncommitted` lists files: have them commit first, in the same message, before the push:
+
+> You have edits not committed yet: {files}. Let's save them first:
+> ```bash
+> git add {files}
+> git commit -m "{a short line on what changed}"
+> ```
+
+Then:
+
+> Your work lives only on your computer so far. Time to **push** (f.t.t. push sends the commits of your branch to the remote, origin, so GitHub has a copy too):
+> ```bash
+> git push -u origin {branch}
+> ```
+> `-u` tells Git that this branch on GitHub is the twin of your local one; from now on a plain `git push` is enough. Tell me when it is done.
+
+Then continue with the pull request in `working.md`.
 
 ## Checkout aborted
 

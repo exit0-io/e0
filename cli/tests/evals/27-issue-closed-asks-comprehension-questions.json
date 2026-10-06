@@ -1,0 +1,47 @@
+{
+  "from": "conversation (2026-09-26): task complete, questions pending. The agent fetches the canonical questions through e0, asks whether the student is ready, then asks one at a time about their own code.",
+  "issues": [
+    [
+      "T010",
+      "CLOSED"
+    ]
+  ],
+  "prs": [
+    [
+      "T010",
+      "MERGED"
+    ]
+  ],
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "e0 status",
+        "e0 questions T010"
+      ],
+      "must_match": [
+        "question",
+        "Ready\\?|ready"
+      ],
+      "must_not_run": [
+        "e0 record",
+        "e0 start"
+      ]
+    },
+    {
+      "say": "yes",
+      "must_match": [
+        "\\?"
+      ],
+      "must_not_match": [
+        "answerHash|outline|canonical"
+      ],
+      "must_not_run": [
+        "e0 record"
+      ]
+    }
+  ]
+}

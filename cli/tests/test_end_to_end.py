@@ -88,7 +88,10 @@ def test_every_command_survives_a_hostile_environment(run_e0, tmp_path):
     """No command may crash, whatever state it is run in."""
     empty = tmp_path / "empty"
     empty.mkdir()
-    for command in ["status", "catalog", "task", "start", "verify", "check", "read", "init", "help"]:
+    for command in [
+        "status", "catalog", "task", "start", "verify", "check", "read", "init", "help",
+        "review", "post-review", "questions", "record", "dismiss",
+    ]:
         payload, code = run_e0([command], empty)
         assert code == 0, f"{command} must exit 0"
         assert "command" in payload, f"{command} must return an envelope"

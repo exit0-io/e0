@@ -1,0 +1,38 @@
+{
+  "from": "conversation (2026-09-26), scenario 4: task in progress, student on its branch, nothing done yet. The agent says where they are and offers to start; no branch lecture, no commands to run.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "t010-say-hello",
+        "issues/1",
+        "start"
+      ],
+      "must_not_match": [
+        "checkout -b",
+        "git checkout main",
+        "production",
+        "pull request",
+        "\\be0 \\w+"
+      ],
+      "must_not_run": [
+        "git checkout",
+        "e0 start",
+        "gh issue create"
+      ]
+    }
+  ]
+}

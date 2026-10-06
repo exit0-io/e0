@@ -1,0 +1,38 @@
+{
+  "from": "conversation (2026-09-26): the common session. Task open, on the branch, the student asks about the code. The answer is about the code; the workflow stays out of it.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "how do i write a python function that takes a name and returns a string with it?",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "def ",
+        "return"
+      ],
+      "must_not_match": [
+        "checkout",
+        "pull request",
+        "push",
+        "\\be0 \\w+",
+        "git\\.md",
+        "working\\.md"
+      ],
+      "must_not_run": [
+        "git checkout",
+        "git commit",
+        "e0 start"
+      ]
+    }
+  ]
+}

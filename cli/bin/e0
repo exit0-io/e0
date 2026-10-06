@@ -17,9 +17,11 @@ import hashlib
 import json
 import pathlib
 import platform
+import random
 import re
 import subprocess
 import sys
+import tempfile
 
 # Must match the git tag exactly — skills are fetched from this ref.
 E0_VERSION = "v1.3"
@@ -88,8 +90,11 @@ _UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
 def git_facts(root, in_progress=()):
     """Where the student stands in Git, so the agent picks the right row of git.md without
     looking or inferring. `task` is the task in progress the branch name points at.
-    `unpushedCommits` is None when GitHub has no copy of the branch yet. `mergingFrom` is
-    the branch of a merge that stopped on conflicts, else None."""
+    `unpushedCommits` is None when GitHub has no copy of the branch yet. `branchCommits`
+    counts the commits `main` does not have (0: the student has not started; more: they are
+    mid-way). `branches` lists every local branch with the task its name points at, so the
+    agent can send the student back to a branch they already made. `mergingFrom` is the
+    branch of a merge that stopped on conflicts, else None."""
     branch = current_branch(root)
     uncommitted, conflicts = [], []
     code, out, _ = run_git(root, "status", "--porcelain", "--untracked-files=all")
@@ -101,10 +106,26 @@ def git_facts(root, in_progress=()):
             (conflicts if status in _UNMERGED else uncommitted).append(path)
 
     unpushed = None
+    branch_commits = None
     if branch:
         code, out, _ = run_git(root, "rev-list", "--count", f"origin/{branch}..{branch}")
         if code == 0 and out.isdigit():
             unpushed = int(out)
+        if branch == "main":
+            branch_commits = 0
+        else:
+            code, out, _ = run_git(root, "rev-list", "--count", f"main..{branch}")
+            if code == 0 and out.isdigit():
+                branch_commits = int(out)
+
+    branches = []
+    code, out, _ = run_git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
+    if code == 0:
+        branches = [
+            {"name": name, "task": task_for_branch(name, in_progress)}
+            for name in out.splitlines()
+            if name
+        ]
 
     merging_from = None
     code, out, _ = run_git(root, "name-rev", "--name-only", "--refs=refs/heads/*", "MERGE_HEAD")
@@ -117,6 +138,8 @@ def git_facts(root, in_progress=()):
         "uncommitted": uncommitted,
         "conflicts": conflicts,
         "unpushedCommits": unpushed,
+        "branchCommits": branch_commits,
+        "branches": branches,
         "mergingFrom": merging_from,
     }
 
@@ -169,6 +192,7 @@ FRAMEWORK_SKILLS = {
         "SKILL.md",
         "references/setup-and-update.md",
         "references/git.md",
+        "references/working.md",
         "assets/checkout.html",
         "assets/conflict.html",
     ],
@@ -261,6 +285,37 @@ def _task_for_title(catalog, title):
     return find_task(catalog, match.group(1)) if match else None
 
 
+# What e0 posts on GitHub carries a marker, so status can count it back without guessing.
+REVIEW_MARKER = "<!-- e0:review -->"
+QUESTIONS_MARKER = "<!-- e0:questions -->"
+
+# statusCheckRollup: a CheckRun has `status` and `conclusion`, a StatusContext has `state`.
+_CI_FAILED = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"}
+_CI_PENDING = {"", "PENDING", "EXPECTED"}
+
+
+def ci_verdict(rollup):
+    """One word for the CI of a pull request: none, pending, failing, or passing."""
+    if not rollup:
+        return "none"
+    verdict = "passing"
+    for item in rollup:
+        conclusion = str(item.get("conclusion") or item.get("state") or "").upper()
+        status = str(item.get("status") or "COMPLETED").upper()
+        if conclusion in _CI_FAILED:
+            return "failing"
+        if status != "COMPLETED" or conclusion in _CI_PENDING:
+            verdict = "pending"
+    return verdict
+
+
+def _bodies(items):
+    """The text bodies of gh comments or reviews, whichever shape gh gave them in."""
+    if isinstance(items, dict):
+        items = items.get("nodes", [])
+    return [str(item.get("body") or "") for item in items or [] if isinstance(item, dict)]
+
+
 def _pr_for(task, issue_number, prs, catalog):
     """The pull request linked to a task: its title names the task, or its body mentions the
     task's issue number. A merged PR wins, then an open one, then the newest closed one."""
@@ -281,6 +336,9 @@ def _pr_for(task, issue_number, prs, catalog):
         "url": best.get("url"),
         "state": best.get("state"),
         "merged": best.get("state", "").upper() == "MERGED",
+        "branch": best.get("headRefName"),
+        "checks": ci_verdict(best.get("statusCheckRollup")),
+        "reviews": sum(REVIEW_MARKER in body for body in _bodies(best.get("reviews"))),
     }
 
 
@@ -288,18 +346,18 @@ def github_progress(root, catalog):
     """Read the student's progress from the GitHub issues and pull requests of this repo.
 
     Returns (progress, None) or (None, error_text). `progress` maps a task id to
-    {"state": "in_progress" | "complete", "issue": {...}, "pr": {...} | None}.
-    An open issue wins over a closed one for the same task.
+    {"state": "in_progress" | "complete", "issue": {...}, "pr": {...} | None,
+    "questionsRecorded": bool}. An open issue wins over a closed one for the same task.
     """
     issues, error = gh_json(
         root, "issue", "list", "--state", "all", "--limit", "1000",
-        "--json", "number,title,state,url",
+        "--json", "number,title,state,url,comments",
     )
     if error:
         return None, error
     prs, error = gh_json(
         root, "pr", "list", "--state", "all", "--limit", "1000",
-        "--json", "number,title,state,url,body",
+        "--json", "number,title,state,url,body,headRefName,statusCheckRollup,reviews",
     )
     if error:
         return None, error
@@ -321,6 +379,9 @@ def github_progress(root, catalog):
                 "state": issue.get("state"),
             },
             "pr": _pr_for(task, issue.get("number"), prs, catalog),
+            "questionsRecorded": any(
+                QUESTIONS_MARKER in body for body in _bodies(issue.get("comments"))
+            ),
         }
     return progress, None
 
@@ -695,6 +756,117 @@ def read_checks_spec(root, task_id):
         return None
 
 
+# Written next to every task's checks. The student runs the tests with one plain pytest
+# command; this hook records the result in results.json, in the same folder, so that
+# `e0 status` reports it, and prints one line so the student sees what e0 will see.
+CHECKS_CONFTEST = '''# Exit0 school checks. Do not edit this file.
+# It records the result of each run in results.json, next to the tests, so that the course
+# tool can report it, and prints one line at the end of the run.
+import datetime
+import json
+import pathlib
+
+HERE = pathlib.Path(__file__).resolve().parent
+RESULTS = HERE / "results.json"
+
+
+def _ours(session, report):
+    path = (session.config.rootpath / report.nodeid.split("::")[0]).resolve()
+    return path == HERE or HERE in path.parents
+
+
+def _counts(session):
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    stats = getattr(reporter, "stats", None) or {}
+    reports = {
+        key: [r for r in stats.get(key, []) if hasattr(r, "nodeid") and _ours(session, r)]
+        for key in ("passed", "failed", "error")
+    }
+    failed = sorted({r.nodeid for key in ("failed", "error") for r in reports[key]})
+    return len(reports["passed"]), failed
+
+
+def pytest_sessionfinish(session, exitstatus):
+    passed, failed = _counts(session)
+    result = {
+        "taskId": HERE.name.upper(),
+        "passing": passed > 0 and not failed,
+        "passed": passed,
+        "failed": len(failed),
+        "failedTests": failed,
+        "ranAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    }
+    RESULTS.write_text(json.dumps(result, indent=2) + "\\n", encoding="utf-8")
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    session = getattr(terminalreporter, "_session", None)
+    if session is None:
+        return
+    passed, failed = _counts(session)
+    total = passed + len(failed)
+    terminalreporter.write_line(
+        f"Exit0: {passed} of {total} checks for {HERE.name.upper()} pass. "
+        "The result is saved in results.json next to the tests."
+    )
+'''
+
+
+def write_checks_conftest(root, task_id, spec):
+    """Only pytest runs get the trace. Other runners leave nothing for status to read."""
+    if not any("pytest" in str(part) for part in spec.get("run", [])):
+        return False
+    path = school_checks_dir(root, task_id) / "conftest.py"
+    path.write_text(CHECKS_CONFTEST, encoding="utf-8")
+    return True
+
+
+def read_results(root, task_id):
+    """The last recorded test run of a task, or None."""
+    path = school_checks_dir(root, task_id) / "results.json"
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return {
+        "passing": bool(raw.get("passing")),
+        "passed": raw.get("passed", 0),
+        "failed": raw.get("failed", 0),
+        "failedTests": raw.get("failedTests", []),
+        "ranAt": raw.get("ranAt"),
+    }
+
+
+def checks_command(root, task_id):
+    """The command the student runs for the task's tests, or None until they are downloaded."""
+    spec = read_checks_spec(root, task_id)
+    if not spec or not spec.get("run"):
+        return None
+    relative = f"tests/school-checks/{task_id.lower()}"
+    return " ".join(str(part).replace("{checks_dir}", relative) for part in spec["run"])
+
+
+def checks_facts(root, task):
+    """What status says about a task's tests: None when the catalog says it has none."""
+    if not task.get("checks", True):
+        return None
+    return {
+        "command": checks_command(root, task["id"]),
+        "lastRun": read_results(root, task["id"]),
+    }
+
+
+def questions_state(task, entry):
+    """None when the catalog says the task has no questions, else done or pending."""
+    if not task.get("questions", True):
+        return None
+    return "done" if entry.get("questionsRecorded") else "pending"
+
+
 def check_hashes(root, task_id):
     """Names of check files whose contents no longer match checks.json."""
     spec = read_checks_spec(root, task_id)
@@ -872,10 +1044,15 @@ def cmd_status(args):
         entry = progress[task["id"]]
         return {**task_summary(task), "issue": entry["issue"], "pr": entry["pr"]}
 
-    in_progress = [with_github(task) for task in tasks_in_progress(catalog, statuses)]
+    # A task in progress carries its tests (the command, the last recorded run); a complete
+    # one carries whether its comprehension questions were recorded on the issue.
+    in_progress = [
+        {**with_github(task), "checks": checks_facts(root, task)}
+        for task in tasks_in_progress(catalog, statuses)
+    ]
     ready = [task_summary(task) for task in available_tasks(catalog, statuses)]
     completed = [
-        with_github(task)
+        {**with_github(task), "questions": questions_state(task, progress[task["id"]])}
         for task in ordered_tasks(catalog)
         if statuses.get(task["id"]) == "complete"
     ]
@@ -988,6 +1165,8 @@ def download_checks(root, task_id, config):
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "checks.json").write_text(checks_text, encoding="utf-8")
     result["copied"].append("checks.json")
+    if write_checks_conftest(root, task_id, spec):
+        result["copied"].append("conftest.py")
 
     for name in spec.get("files", {}):
         file_text = fetch_text(
@@ -1382,6 +1561,258 @@ def cmd_read(args):
     )
 
 
+# ---------------------------------------------------------------- review and questions
+
+
+def require_pr(command, task, progress):
+    """Return (pr, None) or (None, problem_payload). The PR is the student's to open."""
+    entry = progress.get(task["id"])
+    if not entry or not entry["pr"]:
+        return None, problem(
+            command,
+            f"{task['id']} has no pull request yet.",
+            "The student opens a pull request from the task branch into main. "
+            "Then run this command again.",
+        )
+    return entry["pr"], None
+
+
+def pr_diff(root, pr):
+    """The diff of a pull request as text, or None when gh could not give it."""
+    if not pr:
+        return None
+    code, out, _ = run_gh(root, "pr", "diff", str(pr["number"]))
+    return out if code == 0 else None
+
+
+def gh_post(root, marker, text, *args):
+    """Post marker + text through a gh command that takes --body-file. Returns
+    (stdout, None) or (None, error_text)."""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+    try:
+        handle.write(marker + "\n" + text.strip() + "\n")
+        handle.close()
+        code, out, err = run_gh(root, *args, "--body-file", handle.name)
+    finally:
+        try:
+            pathlib.Path(handle.name).unlink()
+        except OSError:
+            pass
+    if code != 0:
+        return None, err or out or "the gh command failed"
+    return out, None
+
+
+def read_body_file(command, args, what):
+    """The text the agent wrote for e0 to post. Returns (text, None) or (None, problem)."""
+    if len(args) < 2:
+        return None, problem(
+            command,
+            f"e0 {command} needs a task id and a file with {what}.",
+            f"Use: e0 {command} <id> <file>",
+        )
+    path = pathlib.Path(args[1])
+    if not path.exists():
+        return None, problem(
+            command,
+            f"The file {args[1]} does not exist.",
+            f"Write {what} to a file first, then run e0 {command} <id> <file>.",
+        )
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        return None, problem(command, f"The file {args[1]} is empty.", f"Write {what} into it first.")
+    return text, None
+
+
+def cmd_review(args):
+    """Hand the agent what a review needs: the PR diff and the rules of this task. The rules
+    are the whole standard: the review checks them and nothing else."""
+    root, catalog, task, failure = resolve_task("review", args)
+    if failure:
+        return failure
+    progress, failure = require_progress("review", root, catalog)
+    if failure:
+        return failure
+    pr, failure = require_pr("review", task, progress)
+    if failure:
+        return failure
+    if pr["checks"] in ("failing", "pending"):
+        return problem(
+            "review",
+            f"The CI checks of pull request #{pr['number']} are {pr['checks']}, so it is not ready "
+            "for a review.",
+            "A pull request is reviewed once its checks pass. Tell the student, in the words of "
+            "'CI is not green' in .exit0/skills/learning/references/working.md. The fix is theirs "
+            "to make and push; then run this command again.",
+        )
+
+    config = read_config(root)
+    task_id = task["id"]
+    rules = {
+        "course": fetch_text(raw_content_url(config, "rules.md")) or "",
+        "task": fetch_text(raw_content_url(config, f"tasks/{task_id.lower()}/rules.md")) or "",
+    }
+    diff = pr_diff(root, pr)
+    if diff is None:
+        return problem(
+            "review",
+            f"e0 could not read the diff of pull request #{pr['number']}.",
+            "Check that the GitHub CLI is logged in ('gh auth status') and try again.",
+        )
+
+    return reply(
+        "review",
+        {"taskId": task_id, "pr": pr, "rules": rules, "diff": diff},
+        f"Review data.diff against data.rules only: the course rules and the rules of {task_id}. "
+        "Anything the rules do not cover is not part of the review. Write the review to a "
+        f"file, then run 'e0 post-review {task_id} <file>'.",
+    )
+
+
+def cmd_post_review(args):
+    """Post the agent's review on the task's pull request, marked so status can count it."""
+    root, catalog, task, failure = resolve_task("post-review", args)
+    if failure:
+        return failure
+    text, failure = read_body_file("post-review", args, "the review")
+    if failure:
+        return failure
+    progress, failure = require_progress("post-review", root, catalog)
+    if failure:
+        return failure
+    pr, failure = require_pr("post-review", task, progress)
+    if failure:
+        return failure
+
+    _, error = gh_post(root, REVIEW_MARKER, text, "pr", "review", str(pr["number"]), "--comment")
+    if error:
+        return problem(
+            "post-review",
+            f"e0 could not post the review on pull request #{pr['number']}. ({error})",
+            "Check that the GitHub CLI is logged in ('gh auth status') and try again.",
+        )
+    return reply(
+        "post-review",
+        {"taskId": task["id"], "pr": pr},
+        f"The review is on the pull request: {pr['url']}",
+    )
+
+
+def decode_question(question):
+    """A question the agent can ask and grade: the correct option in `answer`, options
+    shuffled so the position teaches nothing. Open questions carry their outline."""
+    decoded = {
+        "id": question.get("id"),
+        "type": question.get("type"),
+        "topic": question.get("topic"),
+        "prompt": question.get("prompt", ""),
+    }
+    if question.get("type") == "mcq":
+        options = list(question.get("options", []))
+        answer = next(
+            (
+                option
+                for option in options
+                if hashlib.sha256(option.encode("utf-8")).hexdigest() == question.get("answerHash")
+            ),
+            None,
+        )
+        random.shuffle(options)
+        decoded.update({"options": options, "answer": answer})
+    else:
+        decoded.update(
+            {
+                "outline": question.get("openAnswerOutline", ""),
+                "mandatory": bool(question.get("mandatory", False)),
+            }
+        )
+    return decoded
+
+
+def fetch_questions(config, path):
+    text = fetch_text(raw_content_url(config, path))
+    if text is None:
+        return []
+    try:
+        bank = json.loads(text)
+    except ValueError:
+        return []
+    return [decode_question(q) for q in bank.get("questions", []) if isinstance(q, dict)]
+
+
+def cmd_questions(args):
+    """The comprehension questions of a task: its own bank plus its related topics, with the
+    student's diff to personalize them against."""
+    root, catalog, task, failure = resolve_task("questions", args)
+    if failure:
+        return failure
+
+    config = read_config(root)
+    task_id = task["id"]
+    questions = fetch_questions(config, f"tasks/{task_id.lower()}/questions.json")
+    for topic in task.get("relatedTopics", []):
+        questions.extend(fetch_questions(config, f"knowledgebase/{topic}/questions.json"))
+
+    # The diff and the record are nice to have: the questions work without GitHub.
+    progress, _ = github_progress(root, catalog)
+    entry = (progress or {}).get(task_id, {})
+    diff = pr_diff(root, entry.get("pr"))
+
+    if not questions:
+        message = f"{task_id} has no questions. There is nothing to ask."
+    else:
+        message = (
+            f"{len(questions)} question(s) in data.questions, the correct option in `answer`. "
+            f"Ask them one at a time, in the terms of data.diff. When you are done, write the "
+            f"summary to a file and run 'e0 record {task_id} <file>'."
+        )
+    return reply(
+        "questions",
+        {
+            "taskId": task_id,
+            "questions": questions,
+            "diff": diff,
+            "recorded": bool(entry.get("questionsRecorded")),
+        },
+        message,
+    )
+
+
+def cmd_record(args):
+    """Record the comprehension check as a comment on the task's issue. GitHub is the only
+    record: nothing is kept locally."""
+    root, catalog, task, failure = resolve_task("record", args)
+    if failure:
+        return failure
+    text, failure = read_body_file("record", args, "the summary of the comprehension check")
+    if failure:
+        return failure
+    progress, failure = require_progress("record", root, catalog)
+    if failure:
+        return failure
+    entry = progress.get(task["id"])
+    if not entry:
+        return problem(
+            "record",
+            f"{task['id']} has no issue, so there is nowhere to record the questions.",
+            "Only a task that was started has an issue.",
+        )
+
+    issue = entry["issue"]
+    out, error = gh_post(root, QUESTIONS_MARKER, text, "issue", "comment", str(issue["number"]))
+    if error:
+        return problem(
+            "record",
+            f"e0 could not comment on issue #{issue['number']}. ({error})",
+            "Check that the GitHub CLI is logged in ('gh auth status') and try again.",
+        )
+    return reply(
+        "record",
+        {"taskId": task["id"], "issue": issue, "url": out or issue["url"]},
+        f"The comprehension check of {task['id']} is recorded on its issue: {out or issue['url']}",
+    )
+
+
 def cmd_help(args):
     return reply(
         "help",
@@ -1398,8 +1829,12 @@ COMMANDS = {
     "dismiss": cmd_dismiss,
     "help": cmd_help,
     "init": cmd_init,
+    "post-review": cmd_post_review,
     "profile": cmd_profile,
+    "questions": cmd_questions,
     "read": cmd_read,
+    "record": cmd_record,
+    "review": cmd_review,
     "start": cmd_start,
     "status": cmd_status,
     "task": cmd_task,
