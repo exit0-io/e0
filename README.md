@@ -46,8 +46,8 @@ Every command prints one JSON object and exits 0. A reply that worked has `comma
 | `e0 status` | Tasks in progress, ready to start (a list: tasks form a tree), and completed. Read from the repo's GitHub issues via `gh` |
 | `e0 catalog` | Every task with its full catalog entry and status |
 | `e0 task <id>` | Fetch a task: the canonical text and personalization payload for the agent, plus its checks. Starts nothing |
-| `e0 start <id>` | Verify the agent's `content/<id>/task.md` and return the GitHub issue (title + full task text). The open issue marks the task in progress |
-| `e0 verify <id>` | Check that `content/<id>/task.md` still carries every protected part of the original |
+| `e0 task <id> --write` | Check the personalized task the agent pipes in against the original, and write it to `content/<id>/task.md` only if every protected part is intact |
+| `e0 start <id>` | Open the GitHub issue (title + full text of `content/<id>/task.md`). The open issue marks the task in progress |
 | `e0 check [id]` | Run the task's school checks, warning on drift |
 | `e0 read [topic]` | List knowledge base topics, or fetch one tutorial |
 | `e0 profile get\|set` | Read or record a fact about the student's machine |

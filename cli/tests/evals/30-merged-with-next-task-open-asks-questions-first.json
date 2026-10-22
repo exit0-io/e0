@@ -1,0 +1,45 @@
+{
+  "from": "conversation (2026-10-07): T010 merged and closed, T020 already open. After 'merged' the agent fetched T020 and sent its branch commands; the comprehension questions of T010 were never asked. The questions come first, before the next task.",
+  "issues": [
+    [
+      "T010",
+      "CLOSED"
+    ],
+    [
+      "T020",
+      "OPEN"
+    ]
+  ],
+  "prs": [
+    [
+      "T010",
+      "MERGED"
+    ]
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "merged",
+      "must_run": [
+        "e0 status",
+        "e0 questions T010"
+      ],
+      "must_match": [
+        "question",
+        "Ready\\?|ready"
+      ],
+      "must_not_match": [
+        "checkout -b",
+        "git checkout main"
+      ],
+      "must_not_run": [
+        "e0 task T020",
+        "e0 start",
+        "e0 record"
+      ]
+    }
+  ]
+}

@@ -1,12 +1,11 @@
 {
-  "from": "conversation (2026-09-26), scenario 3: the student wants a later task first. Recommend the order, name what they skip, but open the task anyway; no hard block.",
+  "from": "conversation (2026-09-26), scenario 3: the student wants a later task first. Recommend the order, name what they skip, but open the task anyway; no hard block.. 2026-10-07: e0 start opens the issue itself; the agent never runs gh issue create",
   "turns": [
     {
       "say": "let's start T020",
       "must_run": [
         "e0 task T020",
-        "e0 start T020",
-        "gh issue create"
+        "e0 start T020"
       ],
       "must_match": [
         "T010",
@@ -17,7 +16,8 @@
         "cannot|can't start|not allowed|first complete"
       ],
       "must_not_run": [
-        "git checkout"
+        "git checkout",
+        "gh issue create"
       ]
     }
   ]

@@ -96,5 +96,5 @@ def test_commands_outside_a_git_repo_give_guidance(run_e0, tmp_path):
     outside.mkdir()
     payload, code = run_e0(["profile", "get"], outside)
     assert code == 0
-    assert "problem" in payload
-    assert "course" in payload["guidance"].lower()
+    assert payload["kind"] == "not_a_git_repo"
+    assert "data.message" in payload["guidance"]

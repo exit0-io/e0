@@ -1,4 +1,8 @@
+import json
+
 import pytest
+
+from conftest import ISSUES_FILE, _git
 
 
 @pytest.fixture
@@ -20,8 +24,9 @@ def test_task_returns_canonical_text_in_envelope(run_e0, initialized):
 
 
 def test_task_does_not_write_the_task_file(run_e0, initialized):
-    """Writing the personalized file is the agent's job."""
-    run_e0(["task", "T010"], initialized)
+    """The agent personalizes first; `e0 task <id> --write` writes the file."""
+    payload, _ = run_e0(["task", "T010"], initialized)
+    assert "'e0 task T010 --write'" in payload["message"]
     assert not (initialized / "content" / "t010" / "task.md").exists()
     assert not (initialized / ".exit0" / "tasks").exists()
 
@@ -85,11 +90,14 @@ def test_task_passes_the_whole_catalog_entry_through(run_e0, initialized):
 def test_task_reports_status_and_unmet_dependencies_from_issues(run_e0, initialized, set_issues):
     payload, _ = run_e0(["task", "T020"], initialized)
     assert payload["data"]["unmetDependencies"] == ["T010"]
+    # eval 29 (2026-10-07): haiku started T010 instead of the T020 the student asked for.
+    assert "start T020 itself, never another task in its place" in payload["message"]
 
     set_issues(initialized, [("T010", "CLOSED"), ("T020", "OPEN")])
     payload, _ = run_e0(["task", "T020"], initialized)
     assert payload["data"]["status"] == "in_progress"
     assert payload["data"]["unmetDependencies"] == []
+    assert "never another task" not in payload["message"]
 
 
 def test_task_still_works_when_gh_is_not_set_up(run_e0, initialized, gh_unavailable):
@@ -128,18 +136,49 @@ def test_task_without_an_id_is_a_problem(run_e0, initialized):
 # ---------------------------------------------------------------- e0 start
 
 
-def test_start_emits_an_issue_whose_body_is_the_whole_personalized_task(
+def _issues(repo):
+    return json.loads((repo / ISSUES_FILE).read_text(encoding="utf-8"))
+
+
+def test_start_opens_an_issue_whose_body_is_the_whole_personalized_task(
     run_e0, initialized, write_task_file
 ):
+    """2026-10-07: e0 opens the issue itself, so a cheap model cannot paraphrase the body or
+    break it in shell quoting. The agent gets the URL to link."""
     text = write_task_file(initialized, "T010")
     payload, code = run_e0(["start", "T010"], initialized)
     assert code == 0
     assert "problem" not in payload
+    [opened] = _issues(initialized)
+    assert opened["title"] == "[T010] Say hello"
+    assert opened["body"] == text
+    assert "<!--" not in opened["body"]
     issue = payload["data"]["issue"]
-    assert issue["title"] == "[T010] Say hello"
-    assert issue["body"] == text
-    assert "<!--" not in issue["body"]
-    assert "standard library" in issue["body"]
+    assert issue == {
+        "number": 1,
+        "url": "https://github.com/student/repo/issues/1",
+        "title": "[T010] Say hello",
+    }
+    assert issue["url"] in payload["message"]
+    assert "body" not in issue, "the body is on GitHub; the agent does not need it back"
+
+
+def test_start_works_with_origin_only(run_e0, initialized, write_task_file):
+    """2026-10-07: a repo with more than one remote. e0 opens the issue on origin and says so
+    in words for the student."""
+    write_task_file(initialized, "T010")
+    _git(initialized, "remote", "add", "upstream", "https://github.com/exit0-io/demo-template.git")
+    payload, _ = run_e0(["start", "T010"], initialized)
+    assert payload["data"]["issue"]["url"].startswith("https://github.com/student/repo/")
+    warning = next(w for w in payload["data"]["warnings"] if w["kind"] == "multiple_remotes")
+    assert "I opened the issue on `origin` (student/repo)" in warning["message"]
+    assert "data.warnings first" in payload["message"]
+
+
+def test_start_with_one_remote_says_nothing_about_remotes(run_e0, initialized, write_task_file):
+    write_task_file(initialized, "T010")
+    payload, _ = run_e0(["start", "T010"], initialized)
+    assert payload["data"]["warnings"] == []
 
 
 def test_start_on_the_first_task_points_at_the_branch_walk(
@@ -175,19 +214,7 @@ def test_start_before_the_task_file_exists_points_at_e0_task(run_e0, initialized
     payload, code = run_e0(["start", "T010"], initialized)
     assert code == 0
     assert "problem" in payload
-    assert "e0 task T010" in payload["guidance"]
-    assert "issue" not in payload
-
-
-def test_start_verifies_the_task_file_first(run_e0, initialized, write_task_file):
-    text = write_task_file(initialized, "T010")
-    task_file = initialized / "content" / "t010" / "task.md"
-    task_file.write_text(
-        text.replace("**standard library**", "**requests library**"), encoding="utf-8"
-    )
-    payload, _ = run_e0(["start", "T010"], initialized)
-    assert "problem" in payload
-    assert payload["data"]["violations"]
+    assert "e0 task T010 --write" in payload["guidance"]
     assert "issue" not in payload
 
 
@@ -210,7 +237,9 @@ def test_start_warns_about_unmet_dependencies_but_proceeds(run_e0, initialized, 
     payload, code = run_e0(["start", "T020"], initialized)
     assert code == 0
     assert "problem" not in payload
-    assert any(warning["kind"] == "dependency" for warning in payload["data"]["warnings"])
+    warning = next(w for w in payload["data"]["warnings"] if w["kind"] == "dependency")
+    assert warning["missing"] == ["T010"]
+    assert "T020 builds on T010" in warning["message"], "the same words as status, for the student"
     assert payload["data"]["issue"]["title"] == "[T020] Say goodbye"
 
 
@@ -220,7 +249,8 @@ def test_start_needs_gh(run_e0, initialized, write_task_file, gh_unavailable):
     gh_unavailable(initialized)
     payload, _ = run_e0(["start", "T010"], initialized)
     assert "problem" in payload
-    assert "gh auth" in payload["guidance"]
+    assert payload["kind"] == "gh_logged_out"
+    assert "gh auth login" in payload["message"]
 
 
 def test_start_with_an_unknown_task_lists_valid_ids(run_e0, initialized):
@@ -241,3 +271,17 @@ def test_profile_get_on_fresh_repo_detects_os(run_e0, student_repo):
     assert code == 0
     assert "problem" not in payload
     assert "os" in payload["data"]["profile"]
+
+
+def test_start_only_opens_the_issue_and_checks_nothing_in_the_task_file(
+    run_e0, initialized, write_task_file
+):
+    """2026-10-07: `e0 task --write` checks the file; `e0 start` only opens the issue."""
+    write_task_file(initialized, "T010")
+    task_file = initialized / "content" / "t010" / "task.md"
+    task_file.write_text("edited after the check\n", encoding="utf-8")
+    payload, _ = run_e0(["start", "T010"], initialized)
+    assert "problem" not in payload, payload
+    [opened] = _issues(initialized)
+    assert opened["body"] == "edited after the check\n"
+

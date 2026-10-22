@@ -1,5 +1,5 @@
 {
-  "from": "conversation (2026-09-26): CI is green and no review yet. The agent reviews through e0 review (the task's rules only), posts through e0 post-review, and summarizes in chat with the PR link.",
+  "from": "conversation (2026-09-26): CI is green and no review yet. The agent reviews through e0 review (the task's rules only), posts through e0 review --post (2026-10-07: from stdin, no file in the student repo), and summarizes in chat with the PR link.",
   "issues": [
     [
       "T010",
@@ -23,7 +23,7 @@
       "must_run": [
         "e0 status",
         "e0 review T010",
-        "e0 post-review T010"
+        "e0 review T010 --post"
       ],
       "must_match": [
         "pull/101",
@@ -35,6 +35,7 @@
       ],
       "must_not_run": [
         "gh pr review",
+        "review\\.md",
         "gh pr comment"
       ]
     }

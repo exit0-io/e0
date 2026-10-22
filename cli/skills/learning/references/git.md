@@ -1,6 +1,6 @@
 # Git
 
-The exact words for each Git situation. The table in the `learning` skill maps `status.git` to a section here.
+Open this for a Git question, a Git bug, or a pasted Git error, and in the conversation where the student just opened the first task. The sections below are the cases that need these exact words. If none matches, answer the question yourself, in the course's way.
 
 ## How to teach Git here
 
@@ -8,18 +8,9 @@ The templates below are what you send. Stick to them as closely as you can: the 
 
 Where a section walks numbered steps, send one step per message and wait for the student to run it before the next. "ok" or "done" is enough: trust them and move on. Ask for the output only when you think they are stuck and the output would tell you why.
 
-## Git is missing
-
-> Before anything else we need **Git** on your computer. It is the tool developers use to save their work step by step and to work together on one codebase. Install it from https://git-scm.com/downloads, then tell me. To check it worked, run:
-> ```bash
-> git --version
-> ```
-
-Continue with the scenario you were in once the version prints.
-
 ## The branch, step by step
 
-Use this in two cases only: right after you opened the student's first issue, in this same conversation; or when, after [On main with a task open](#on-main-with-a-task-open), the student asks to understand Git or branches better.
+Use this in two cases only: right after `e0 start` opened the student's first issue, in this same conversation; or when, after `e0 status` sent the on-main reminder, the student asks to understand Git or branches better.
 
 Send these messages as they are: first the opening, then each numbered step as its own message.
 
@@ -60,106 +51,7 @@ Send these messages as they are: first the opening, then each numbered step as i
 > ```
 > Replace `<task-branch>` with a meaningful name for this task.
 
-Once they report they ran it, run `e0 status` and check `git.branch` against [Branch naming issues](#branch-naming-issues).
-
-## On main with a task open
-
-The student has open issues (probably opened in another conversation), `git.branch` is `main`, and they are about to work on one of them. Several tasks in progress: ask which one they work on now, then continue here.
-
-Open with:
-
-> You are on the `main` branch, and we never work on it directly, remember? In a real-life project no one will let you work directly on `main`: it is the **production** branch. You work on each task on its own **feature branch**, then merge it into `main` through a **pull request**, so it passes the CI checks and a review.
-
-Then `git.unpushedCommits` and `git.uncommitted` say how far they got. Continue, in the same message, with the first that matches:
-
-**Commits on `main`** (`unpushedCommits` is above 0):
-
-> You committed on `main`. Here is what your repository looks like right now:
->
-> ```
-> A --- B              origin/main: what GitHub has
->        \
->         C            main on your computer: {n} commit(s) GitHub does not have
-> ```
->
-> Nothing is lost. You can choose:
->
-> 1. **Move the commits** to a new feature branch for this task, and put `main` back to what GitHub has.
-> 2. **Drop the commits** and put `main` back to what GitHub has. Your files go back to `main`'s version.
->
-> Which one?
-
-For 1: `git branch <task-branch>` (a new branch that points at the commits), `git reset --keep origin/main` (`main` goes back to what GitHub has; the commits stay on the new branch), `git checkout <task-branch>`. For 2: `git reset --keep origin/main`, then the clean case below.
-
-**Uncommitted work on `main`** (`uncommitted` lists files):
-
-> You changed {the files, from `git.uncommitted`} but did not **commit** them yet, so nothing is lost and nothing is decided. Two ways out, you choose:
->
-> 1. **Keep the changes** and take them with you into a new feature branch. Git carries uncommitted edits along when you create a branch.
-> 2. **Throw the changes away** and start clean on a new feature branch.
->
-> Which one?
-
-For 1: `git checkout -b <task-branch>` (replace the placeholder with a meaningful name). For 2: `git restore .` (edited files go back to what `main` has; new files they delete by hand), then `git checkout -b <task-branch>`.
-
-**A branch for this task exists** (`git.branches` has an entry whose `task` is this task):
-
-> You already have a branch for this task: `{name}`. Let's go back to it:
-> ```bash
-> git checkout {name}
-> ```
-> Your work there is waiting for you. If you would rather start over on a fresh branch, tell me and we will make one.
-
-**Clean** (nothing above matched):
-
-> To create your branch from an up-to-date `main`:
-> ```bash
-> git checkout main
-> git pull origin main
-> git checkout -b <task-branch>
-> ```
-> Replace `<task-branch>` with a meaningful name for this task.
-
-## Unclear branch
-
-Several issues are open and `git.task` is null: the branch name points at none of them.
-
-> You are on the branch `{branch}`. {n} tasks are in progress ({ids and issue URLs}), and the name `{branch}` does not tell me which one this branch is for. Which task are you working on now?
->
-> A branch name that says the task, like the task id and a word or two from its title, helps both of us: I can see what you work on, and so can your teammates. Once you tell me the task, we either rename this branch for it or create a fresh one.
-
-Then, if the branch holds work for that task, [rename it](#branch-naming-issues). If not, create a new one with `git checkout -b <task-branch>` from an up-to-date `main`.
-
-## Branch naming issues
-
-- **The branch is called `<task-branch>` or has `<` `>` in it.**
-
-> You included the `<` `>` in the branch name by mistake. Throughout the course `<` and `>` mark a placeholder; the brackets are not part of the name. No harm done, renaming is one command, and it matters because the team will see this name:
-> ```bash
-> git branch -m <task-branch>
-> ```
-
-- **The name says nothing about the task.** A good name is short, lowercase, hyphens, and says which task: `t010-say-hello`. The whole team reads it. Say what to change and give the same rename command.
-
-## Push the branch
-
-The tests pass and the work is committed, or the student is ready to send it in. `git.uncommitted` lists files: have them commit first, in the same message, before the push:
-
-> You have edits not committed yet: {files}. Let's save them first:
-> ```bash
-> git add {files}
-> git commit -m "{a short line on what changed}"
-> ```
-
-Then:
-
-> Your work lives only on your computer so far. Time to **push** (f.t.t. push sends the commits of your branch to the remote, origin, so GitHub has a copy too):
-> ```bash
-> git push -u origin {branch}
-> ```
-> `-u` tells Git that this branch on GitHub is the twin of your local one; from now on a plain `git push` is enough. Tell me when it is done.
-
-Then continue with the pull request in `working.md`.
+Once they report they ran it, run `e0 status`.
 
 ## Checkout aborted
 
@@ -177,17 +69,3 @@ The student pastes `error: Your local changes to the following files would be ov
 For 1: `git add <files>`, `git commit -m "..."`, then `git checkout {target}`.
 
 If they want the picture: run `python3 -m http.server 8765 --directory .exit0/skills/learning/assets` in the background (another port if that one is taken) and send `http://localhost:8765/checkout.html?branch={branch}&target={target}&file={file}`. It plays both cases with their names.
-
-## Merge conflict
-
-`git.conflicts` lists the files and `git.mergingFrom` names the branch being merged in. Say it before anything else, even if the student did not mention it. Before you send it, run `python3 -m http.server 8765 --directory .exit0/skills/learning/assets` in the background (another port if that one is taken): the link in the template is `http://localhost:8765/conflict.html?branch={git.branch}&other={git.mergingFrom}&file={first file in git.conflicts}`. It replays, step by step, how two branches changed the same lines and how the merge stopped.
-
-> I see a **merge conflict** in {files}. Don't worry: this is common, and it is fixable. It usually happens when two developers change the same lines of the same file. You are the only developer here, so it happened because the same lines were changed on two of your branches, `{branch}` and `{mergingFrom}`. To see step by step how you got here, open {link}.
->
-> Git merged every file it could on its own; those are already staged, ready to commit. For {files} it could not choose, so it stopped and wrote both versions into the file between markers: `<<<<<<<`, `=======`, `>>>>>>>`. Your job: decide, for each spot, what the final text should be.
->
-> VS Code helps. Open the file, click **Resolve in Merge Editor**, and for each spot choose the current version, the incoming one, both, or type the result. Then **Complete Merge**. After that:
-> ```bash
-> git add <file>
-> ```
-> and a commit, and the merge is done.

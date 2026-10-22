@@ -1,0 +1,56 @@
+{
+  "from": "conversation (2026-10-07): the student said 'done' after creating the branch, and the agent read greeting.py and wrote the function itself. The agent never starts implementing on its own; once the student asks for help, it helps like a regular coding agent.",
+  "issues": [
+    [
+      "T010",
+      "OPEN"
+    ]
+  ],
+  "branch": "t010-say-hello",
+  "fetch": [
+    "T010"
+  ],
+  "turns": [
+    {
+      "say": "done, i created the branch",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "t010-say-hello",
+        "start|ready"
+      ],
+      "must_not_change": [
+        "greeting.py"
+      ],
+      "must_not_run": [
+        "git commit",
+        "git add",
+        "e0 check"
+      ]
+    },
+    {
+      "say": "yes lets go",
+      "must_not_change": [
+        "greeting.py"
+      ],
+      "must_not_run": [
+        "git commit",
+        "git add"
+      ]
+    },
+    {
+      "say": "i'm stuck. can you write the function for me in greeting.py?",
+      "must_change": [
+        "greeting.py"
+      ],
+      "must_not_match": [
+        "I can't|I cannot|not allowed|on your own"
+      ],
+      "must_not_run": [
+        "git commit",
+        "git add"
+      ]
+    }
+  ]
+}

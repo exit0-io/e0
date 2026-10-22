@@ -1,0 +1,21 @@
+{
+  "from": "2026-10-07 design talk: e0 runs every gh command. When gh is not logged in, e0's problem message is the student text: the agent sends it and lets the student log in, never running gh itself.",
+  "gh_logged_out": true,
+  "turns": [
+    {
+      "say": "hi",
+      "must_run": [
+        "e0 status"
+      ],
+      "must_match": [
+        "gh auth login",
+        "GitHub\\.com|web browser"
+      ],
+      "must_not_run": [
+        "gh auth",
+        "gh issue",
+        "gh pr"
+      ]
+    }
+  ]
+}

@@ -34,6 +34,17 @@ def e0mod():
 _COVERAGE_CFG = str(FRAMEWORK_SRC / "setup.cfg")
 
 
+def pytest_sessionfinish(session, exitstatus):
+    """Every e0 subprocess writes its own .coverage.* file (parallel = true). Nobody
+    combines them, so delete them when the run ends, unless coverage itself is
+    measuring this run and will combine them."""
+    coverage = sys.modules.get("coverage")
+    if coverage is not None and coverage.Coverage.current() is not None:
+        return
+    for leftover in FRAMEWORK_SRC.glob(".coverage.*"):
+        leftover.unlink(missing_ok=True)
+
+
 ISSUES_FILE = ".fake-gh-issues.json"
 PRS_FILE = ".fake-gh-prs.json"
 DIFF_FILE = ".fake-gh-diff.txt"
@@ -55,8 +66,10 @@ new file mode 100644
 #   gh pr diff N                -> print <repo>/.fake-gh-diff.txt, or a small default diff
 #   gh pr review N --comment    -> append a review to PR N
 #   gh auth status              -> succeed
+# Issue and pr commands must name the repo (--repo OWNER/REPO), as e0 pins them to origin.
 # A .fake-gh-issues.json holding {"error": "..."} makes every command fail the way a
-# logged-out gh would. The files live at the git root, so cwd inside the repo is fine.
+# logged-out gh would; with "loggedIn": true, `gh auth status` still succeeds.
+# The files live at the git root, so cwd inside the repo is fine.
 FAKE_GH = f"""#!/usr/bin/env python3
 import json, os, subprocess, sys
 
@@ -89,12 +102,21 @@ def find(records, number):
     print("fake gh: no record #" + str(number), file=sys.stderr)
     sys.exit(1)
 
+args = sys.argv[1:]
 issues = load({ISSUES_FILE!r})
 if isinstance(issues, dict) and "error" in issues:
+    if args[:2] == ["auth", "status"] and issues.get("loggedIn"):
+        print("Logged in to github.com as student")
+        sys.exit(0)
     print(issues["error"], file=sys.stderr)
     sys.exit(4)
 
-args = sys.argv[1:]
+repo = None
+if args[:1] in (["issue"], ["pr"]):
+    if "--repo" not in args:
+        print("fake gh: e0 must pass --repo", file=sys.stderr)
+        sys.exit(1)
+    repo = args[args.index("--repo") + 1]
 if args[:2] == ["issue", "list"]:
     print(json.dumps(issues))
 elif args[:2] == ["pr", "list"]:
@@ -104,7 +126,7 @@ elif args[:2] == ["issue", "create"]:
     for i, a in enumerate(args):
         if a in ("--title", "-t"): title = args[i + 1]
     number = max([i.get("number", 0) for i in issues] + [0]) + 1
-    url = f"https://github.com/student/repo/issues/{{number}}"
+    url = f"https://github.com/{{repo}}/issues/{{number}}"
     issues.append({{"number": number, "title": title, "state": "OPEN", "url": url, "body": body_from(args)}})
     save({ISSUES_FILE!r}, issues)
     print(url)
@@ -203,24 +225,42 @@ CI_PENDING = [{"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": 
 
 @pytest.fixture
 def gh_unavailable():
-    def _break(repo, error="gh: To get started with GitHub CLI, please run: gh auth login"):
-        (pathlib.Path(repo) / ISSUES_FILE).write_text(json.dumps({"error": error}), encoding="utf-8")
+    """Make the fake gh fail: logged out by default, or logged in with some other error."""
+
+    def _break(
+        repo, error="gh: To get started with GitHub CLI, please run: gh auth login", logged_in=False
+    ):
+        record = {"error": error, "loggedIn": logged_in}
+        (pathlib.Path(repo) / ISSUES_FILE).write_text(json.dumps(record), encoding="utf-8")
 
     return _break
 
 
 @pytest.fixture
-def run_e0(fake_gh_bin):
-    """Invoke e0 as a real subprocess and return (parsed_json, exit_code)."""
+def run_e0(fake_gh_bin, tmp_path):
+    """Invoke e0 as a real subprocess and return (parsed_json, exit_code). gh=False runs it
+    on a PATH with git and no gh at all. git=False runs it on a PATH with neither."""
+    no_gh = tmp_path / "git-only-bin"
+    no_git = tmp_path / "no-git-bin"
 
-    def _run(args, cwd, env=None):
+    def _run(args, cwd, env=None, stdin=None, gh=True, git=True):
         merged = dict(os.environ)
         merged.update(env or {})
-        merged["PATH"] = f"{fake_gh_bin}{os.pathsep}{merged.get('PATH', '')}"
+        if not git:
+            no_git.mkdir(exist_ok=True)
+            merged["PATH"] = str(no_git)
+        elif gh:
+            merged["PATH"] = f"{fake_gh_bin}{os.pathsep}{merged.get('PATH', '')}"
+        else:
+            no_gh.mkdir(exist_ok=True)
+            if not (no_gh / "git").exists():
+                (no_gh / "git").symlink_to(shutil.which("git"))
+            merged["PATH"] = str(no_gh)
         merged.setdefault("COVERAGE_PROCESS_START", _COVERAGE_CFG)
         proc = subprocess.run(
             [sys.executable, str(E0_PATH), *args],
             cwd=str(cwd),
+            input=stdin or "",
             capture_output=True,
             text=True,
             env=merged,
@@ -229,6 +269,17 @@ def run_e0(fake_gh_bin):
         return payload, proc.returncode
 
     return _run
+
+
+# Every student repo's origin is on GitHub; e0 reads and writes the issues there.
+GITHUB_ORIGIN = "https://github.com/student/repo.git"
+
+
+def push_to_bare_origin(repo, bare):
+    """Let `git push origin` reach a local bare repo while origin still reads as GitHub."""
+    _git(bare.parent, "init", "-q", "--bare", str(bare))
+    _git(repo, "config", f"url.{bare}.insteadOf", GITHUB_ORIGIN)
+    _git(repo, "push", "-q", "-u", "origin", "main")
 
 
 def _git(cwd, *args):
@@ -332,6 +383,7 @@ def student_repo(tmp_path, content_server, framework_server):
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "initial")
+    _git(repo, "remote", "add", "origin", GITHUB_ORIGIN)
     return repo
 
 
@@ -361,15 +413,15 @@ def personalize(e0mod):
 
 @pytest.fixture
 def write_task_file(run_e0, personalize):
-    """Run `e0 task <id>` and write the personalized file, as the agent would. Returns the text."""
+    """Run `e0 task <id>` and pipe the personalized text to `e0 task <id> --write`, as the
+    agent would. Returns the text."""
 
     def _write(repo, task_id, note=None):
         payload, _ = run_e0(["task", task_id], repo)
         assert "problem" not in payload, payload
         text = personalize(payload, note=note)
-        path = pathlib.Path(repo) / payload["data"]["paths"]["task"]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        written, _ = run_e0(["task", task_id, "--write"], repo, stdin=text)
+        assert "problem" not in written, written
         return text
 
     return _write

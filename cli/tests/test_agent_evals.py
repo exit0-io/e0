@@ -26,7 +26,11 @@ And GitHub: "issues" and "prs" are lists of [task, state] pairs, or dicts {"task
 ...} with extra fields. A PR dict may say "checks": "passing" | "failing" | "pending" and
 "reviews": n (Exit0 reviews). An issue dict may say "questions_recorded": true. "fetch" lists
 tasks whose file and checks are on disk (as after `e0 task`), "results" {task: {passed,
-failed}} records a test run, and "diff" is what `gh pr diff` prints.
+failed}} records a test run, "diff" is what `gh pr diff` prints, and "gh_logged_out": true
+makes every gh command fail as a logged-out gh does.
+
+A turn may list "must_not_change": files the agent leaves as they were (content, or absent),
+and "must_change": files the agent writes or edits during the turn.
 """
 
 import datetime
@@ -47,8 +51,10 @@ from conftest import (
     ISSUES_FILE,
     PRS_FILE,
     E0_PATH,
+    GITHUB_ORIGIN,
     ROOT_TEMPLATE,
     _git,
+    push_to_bare_origin,
 )
 
 CI = {"passing": CI_PASSING, "failing": CI_FAILING, "pending": CI_PENDING}
@@ -142,11 +148,9 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin, write_ta
         # The template copy brings its own origin and origin/main along, which would make
         # e0 count the initial commit as unpushed. A student's remote is the bare repo below.
         subprocess.run(["git", "remote", "remove", "origin"], cwd=str(repo), capture_output=True)
+        _git(repo, "remote", "add", "origin", GITHUB_ORIGIN)
         if scenario.get("remote"):
-            remote = tmp_path / "origin.git"
-            _git(tmp_path, "init", "-q", "--bare", str(remote))
-            _git(repo, "remote", "add", "origin", str(remote))
-            _git(repo, "push", "-q", "-u", "origin", "main")
+            push_to_bare_origin(repo, tmp_path / "origin.git")
         for name in scenario.get("branches", []):
             _git(repo, "branch", name)
         if scenario.get("branch"):
@@ -181,6 +185,8 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin, write_ta
 
         issues = [_issue_record(n, item) for n, item in enumerate(scenario.get("issues", []), start=1)]
         prs = [_pr_record(n, item) for n, item in enumerate(scenario.get("prs", []), start=1)]
+        if scenario.get("gh_logged_out"):
+            issues = {"error": "gh: To get started with GitHub CLI, please run: gh auth login"}
         (repo / ISSUES_FILE).write_text(json.dumps(issues), encoding="utf-8")
         (repo / PRS_FILE).write_text(json.dumps(prs), encoding="utf-8")
         if scenario.get("diff"):
@@ -210,11 +216,17 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin, write_ta
 
 
 class Turn:
-    def __init__(self, session_id, texts, commands, raw):
+    def __init__(self, session_id, texts, commands, raw, repo=None):
         self.session_id = session_id
         self.text = "\n".join(texts)
         self.commands = commands
         self.raw = raw
+        self.repo = repo
+
+
+def _file_state(repo, name):
+    path = repo / name
+    return path.read_text(encoding="utf-8") if path.exists() else None
 
 
 def run_agent(repo, message, fake_gh_bin, session_id=None, timeout=420):
@@ -248,7 +260,7 @@ def run_agent(repo, message, fake_gh_bin, session_id=None, timeout=420):
                 elif block.get("type") == "tool_use" and block.get("name") == "Bash":
                     commands.append(block["input"].get("command", ""))
     assert proc.returncode == 0 or texts, f"claude failed: {proc.stderr[-2000:]}"
-    return Turn(sid, texts, commands, proc.stdout)
+    return Turn(sid, texts, commands, proc.stdout, repo=repo)
 
 
 def _check(turn, expectations, label):
@@ -266,6 +278,12 @@ def _check(turn, expectations, label):
     for pattern in expectations.get("must_not_run", []):
         if re.search(pattern, joined_commands):
             failures.append(f"agent must not run /{pattern}/")
+    for name, before in expectations.get("_snapshot", {}).items():
+        changed = _file_state(turn.repo, name) != before
+        if changed and name in expectations.get("must_not_change", []):
+            failures.append(f"agent must not change {name}")
+        if not changed and name in expectations.get("must_change", []):
+            failures.append(f"agent should have changed {name}")
     assert not failures, (
         f"{label}:\n  - " + "\n  - ".join(failures)
         + f"\n\n--- reply ---\n{turn.text}\n\n--- commands ---\n{joined_commands}"
@@ -281,6 +299,8 @@ def test_agent_follows_the_learning_skill(path, agent_repo, fake_gh_bin):
     repo = agent_repo(scenario)
     session_id = None
     for index, step in enumerate(scenario["turns"], start=1):
+        watched = step.get("must_not_change", []) + step.get("must_change", [])
+        step = {**step, "_snapshot": {name: _file_state(repo, name) for name in watched}}
         turn = run_agent(repo, step["say"], fake_gh_bin, session_id=session_id)
         session_id = turn.session_id
         _check(turn, step, f"{path.stem}, turn {index} ({step['say']!r})")
