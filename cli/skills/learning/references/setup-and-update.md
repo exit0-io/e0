@@ -39,7 +39,7 @@ python .exit0/e0 init
 
 `RELEASE` pins the version this skill was written for. When that download fails (for example, the tag is not published yet), the second `curl` takes the **latest release**. Never search for a version by hand.
 
-`init` prints JSON. On `problem`, tell the student the `message` in plain words and help them fix it (usually the internet connection or a missing `.exit0/config.json`). Continue only after `init` succeeds.
+`init` prints JSON. Say its `message` and follow its `guidance` (usually the internet connection or a missing `.exit0/config.json`). Continue only after `init` succeeds.
 
 After `init` succeeds, send this one note, then go back to the `learning` skill, "Every session", step 2:
 

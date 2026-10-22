@@ -8,8 +8,8 @@ Single file, standard library only, no install step. Never crashes: every invoca
 exits 0 and prints exactly one JSON object to stdout, so a failure is something the
 agent can read aloud rather than a dead end.
 
-Envelope: a successful reply is `{"command", "data", "message"}`. A failure is
-`{"command", "problem", "guidance", "message"}`. The presence of `problem` is the signal.
+Envelope: every reply is `{"command", "message", "guidance", "data"}`. `message` is for
+the student, said as written. `guidance` is for the agent. Either may be empty.
 """
 
 import datetime
@@ -31,27 +31,32 @@ E0_VERSION = "v1.3"
 # ---------------------------------------------------------------- envelope
 
 
-def reply(command, data=None, message=""):
-    """A successful reply. It has `data` and no `problem` key."""
+def reply(command, data=None, message="", guidance=""):
+    """Every command returns this. `message` is for the student. `guidance` is for the agent.
+    Either may be empty. `data` holds the facts."""
     return {
         "command": command,
+        "message": message or "",
+        "guidance": guidance or "",
         "data": data if data is not None else {},
-        "message": message,
     }
 
 
-def problem(command, problem, guidance, message=None, kind=None):
-    """A failed reply. The `problem` key is what tells it apart from a success. A `kind`
-    names a failure the agent may meet again, so its `message` is the student text."""
-    payload = {
-        "command": command,
-        "problem": problem,
-        "guidance": guidance,
-        "message": message if message is not None else f"{problem} {guidance}",
-    }
-    if kind:
-        payload["kind"] = kind
-    return payload
+def problem(command, summary, guidance, message=None, data=None, tell=False):
+    """A failure, in the same shape as every other reply.
+
+    The long notes (Git missing, GitHub, a merge conflict) pass `message`: that is what the
+    student hears. `tell=True` means `summary` itself is the student text. Otherwise only the
+    agent hears it, and both strings go to `guidance`.
+    """
+    if message is not None:
+        heard = message
+    elif tell:
+        heard = summary
+    else:
+        heard = ""
+        guidance = f"{summary} {guidance}".strip()
+    return reply(command, data, heard, guidance)
 
 
 # ---------------------------------------------------------------- process
@@ -180,8 +185,8 @@ def school_checks_dir(root, task_id):
 
 
 def require_repo(command):
-    """Return (root, None) or (None, problem_payload). Git missing and not-a-repo are
-    student text, same as github_problem: the agent sends data.message as it is."""
+    """Return (root, None) or (None, a reply). Git missing and not-a-repo put the
+    student text in message, same as github_problem."""
     if shutil.which("git") is None:
         return None, git_missing_problem(command)
     root = repo_root()
@@ -297,7 +302,7 @@ def run_gh(cwd, *args):
 GH_INSTALL_URL = "https://github.com/cli/cli#installation"
 GIT_INSTALL_URL = "https://git-scm.com/downloads"
 CONFLICT_VIZ_PORT = 8765
-AGAIN = "Send data.message to the student as it is. When they say it is done, run the same e0 command again."
+AGAIN = "When they say it is done, run the same e0 command again."
 
 
 def git_missing_problem(command):
@@ -309,7 +314,6 @@ def git_missing_problem(command):
         "use to save their work step by step and to work together on one codebase. Install "
         f"it from {GIT_INSTALL_URL}, then tell me. To check it worked, run:\n"
         "```bash\ngit --version\n```",
-        kind="git_missing",
     )
 
 
@@ -323,7 +327,6 @@ def not_a_git_repo_problem(command):
         "Git repo: that is how we save work and open it on GitHub. Open the folder of your "
         "course project (the one you cloned from GitHub) and tell me. If you have not cloned "
         "it yet, clone it first, then open that folder.",
-        kind="not_a_git_repo",
     )
 
 
@@ -365,7 +368,6 @@ def merge_conflict_problem(command, git):
         "choose the current version, the incoming one, both, or type the result. Then "
         f"**Complete Merge**. After that:\n```bash\ngit add {add}\n```\n"
         "and a commit, and the merge is done.",
-        kind="merge_conflict",
     )
 
 
@@ -382,7 +384,6 @@ def github_problem(command, root, what, error):
             "lives in the issues of your repo on GitHub, and `gh` is how I read and open them. "
             f"Install it with GitHub's official guide for your system: {GH_INSTALL_URL}. "
             "Then run `gh auth login` in your terminal to log in, and tell me when it is done.",
-            kind="gh_missing",
         )
     if origin_repo(root) is None:
         url = origin_url(root)
@@ -401,7 +402,6 @@ def github_problem(command, root, what, error):
             "**Code** button on its GitHub page, then run:\n"
             f"```bash\ngit remote {fix} origin <your-repo-address>\n```\n"
             "Tell me when it is done.",
-            kind="no_github_remote",
         )
     code, _, _ = run_gh(root, "auth", "status", "--hostname", "github.com")
     if code != 0:
@@ -414,16 +414,14 @@ def github_problem(command, root, what, error):
             "```bash\ngh auth login\n```\n"
             "It asks a few questions: choose **GitHub.com**, then **Login with a web browser**, "
             "and follow the steps. Tell me when it is done.",
-            kind="gh_logged_out",
         )
     return problem(
         command,
         f"{what}. ({error})",
-        "Send data.message to the student. Run the same e0 command again when they ask.",
+        "Run the same e0 command again when they ask.",
         f"I could not reach GitHub just now ({error}). It may be a network problem, so let's "
         "try again in a moment. If it keeps happening, please report it with this error at "
         "https://github.com/exit0-io/e0/issues.",
-        kind="gh_failed",
     )
 
 
@@ -1078,7 +1076,7 @@ def cmd_profile(args):
         return reply(
             "profile",
             {"profile": profile},
-            "Your profile: " + ", ".join(f"{k}={v}" for k, v in sorted(profile.items())),
+            guidance="The profile is in data.profile. The student does not need to hear it.",
         )
 
     if action == "set":
@@ -1091,7 +1089,11 @@ def cmd_profile(args):
         key, value = args[1], args[2]
         profile[key] = value
         write_profile(root, profile)
-        return reply("profile", {"profile": profile}, f"Recorded {key}={value}.")
+        return reply(
+            "profile",
+            {"profile": profile},
+            guidance=f"Recorded {key}={value}. The student does not need to hear it.",
+        )
 
     return problem(
         "profile",
@@ -1111,6 +1113,7 @@ def cmd_init(args):
             "init",
             "e0 cannot find the course content repo.",
             "Check that .exit0/config.json exists and has a 'courseContentRepo' key.",
+            tell=True,
         )
 
     catalog_text = fetch_text(raw_content_url(config, "catalog.json"))
@@ -1119,6 +1122,7 @@ def cmd_init(args):
             "init",
             "e0 could not download the course catalog.",
             "Check your internet connection and the 'courseContentRepo' in .exit0/config.json.",
+            tell=True,
         )
 
     try:
@@ -1128,6 +1132,7 @@ def cmd_init(args):
             "init",
             "The course catalog is not valid JSON.",
             "This is a problem with the course itself. Please report it.",
+            tell=True,
         )
 
     (exit0_dir(root) / "catalog.json").write_text(catalog_text, encoding="utf-8")
@@ -1178,15 +1183,13 @@ def cmd_catalog(args):
     return reply(
         "catalog",
         {"course": catalog.get("course", {}), "tasks": tasks},
-        f"{len(tasks)} tasks, {done} complete.",
+        guidance=f"{len(tasks)} tasks, {done} complete. Answer the student from data.tasks.",
     )
 
 
 def _stand(kind, message, guidance=""):
-    payload = {"kind": kind, "message": message}
-    if guidance:
-        payload["guidance"] = guidance
-    return payload
+    """One situation. `kind` names it in the source; the reply carries message and guidance."""
+    return {"message": message, "guidance": guidance}
 
 
 def _pick_task(git, in_progress):
@@ -1312,7 +1315,7 @@ def _push_message(git):
             f"You have edits not committed yet: {files}. Let's save them first:\n"
             "```bash\n"
             f"git add {files}\n"
-            'git commit -m "{a short line on what changed}"\n'
+            'git commit -m "{line: a short line on what changed}"\n'
             "```"
         )
     parts.append(
@@ -1349,7 +1352,7 @@ def _ship_stand(git, task):
         return _stand(
             "push_branch",
             _push_message(git),
-            "Send data.stand.message as it is. Fill the commit-message braces if they are there. "
+            "Fill the {line} blank in the commit command when it is there. "
             "When they say the push is done, run `e0 status`.",
         )
     return _stand(
@@ -1357,8 +1360,7 @@ def _ship_stand(git, task):
         _open_pr_message(git, task),
         "Before you send, run `e0 read pull-requests` and write `data.tutorial` to "
         "`content/knowledge-base/pull-requests.md`, so the link works. If the course has no such "
-        "topic, send the same words without the link. Send data.stand.message as it is. When "
-        "they say it is open, run `e0 status`.",
+        "topic, leave the link out. When they say it is open, run `e0 status`.",
     )
 
 
@@ -1386,7 +1388,7 @@ def _run_tests_stand(task):
     return _stand(
         "run_tests",
         _run_tests_message(command),
-        "Send data.stand.message as it is. When they report back, run `e0 status`.",
+        "When they report back, run `e0 status`.",
     )
 
 
@@ -1398,7 +1400,7 @@ def _tests_failed_message(task):
     listed = ", ".join(names) if names else "their names are in the output"
     return (
         f"{failed} of {passed + failed} checks fail: {listed}. "
-        "{One line per failing test on what it expects, from its name and the task.} "
+        "{line: one line per failing test on what it expects, from its name and the task} "
         "Let's look at the code together. Where do you want to start? "
         "You can also paste the error you got."
     )
@@ -1415,9 +1417,9 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             "questions_pending",
             f"Before we move on, a few questions about what you built in {task_id}. They are "
             "not a test; they help the ideas stick. Ready?",
-            f"Run `e0 questions {task_id}`. Send data.stand.message, then ask the questions one "
-            f"at a time, as the learning skill's Comprehension questions section says, and record "
-            f"them with `e0 record {task_id} .exit0/questions.md`.",
+            f"Run `e0 questions {task_id}`. Ask the questions one at a time, as the learning "
+            f"skill's Comprehension questions section says, and record them with "
+            f"`e0 record {task_id} .exit0/questions.md`.",
         )
     if not in_progress:
         where = (
@@ -1471,14 +1473,14 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             return _stand(
                 "ci_not_green",
                 message,
-                "Send data.stand.message as it is, before you run or fix anything. The fix is the student's.",
+                "Do this before you run or fix anything. The fix is the student's.",
             )
         if not pr.get("reviews"):
             task_id = task["id"]
             return _stand(
                 "review",
                 f"I reviewed your pull request against the rules of this task and left my notes "
-                f"there: {url}. {{one or two sentences: what is good, and what to change, if anything.}} "
+                f"there: {url}. {{line: one or two sentences on what is good, and what to change, if anything}} "
                 "Read the comments. If something needs a change: fix it, commit, push, and tell me; "
                 "the pull request updates itself and I will look again. If nothing does, you can merge.",
                 f"Review now; the student does not need to ask. Run `e0 review {task_id}`. "
@@ -1487,7 +1489,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
                 f"`## Review of {task_id}`, one bullet per rule (met or not, and the line that shows "
                 f"it), close with what to change or \"Nothing to change\". Post with "
                 f"`e0 review {task_id} --post <<'EOF'` ... `EOF`. Each rule only: no general best practices, "
-                "never a file. Fill the braces in data.stand.message from the review, then send it. "
+                "never a file. Fill the {line} blank from the review. "
                 "They may ask again after changes: same way.",
             )
         return _stand(
@@ -1519,7 +1521,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
         return _stand(
             "on_main",
             opening + "\n\n" + _on_main_continuation(git, in_progress, task),
-            "Send data.stand.message as it is. If they choose: move commits = `git branch <task-branch>`, "
+            "If they choose: move commits = `git branch <task-branch>`, "
             "`git reset --keep origin/main`, `git checkout <task-branch>`; drop commits = "
             "`git reset --keep origin/main`; keep uncommitted = `git checkout -b <task-branch>`; "
             "throw away = `git restore .` then `git checkout -b <task-branch>`.",
@@ -1532,7 +1534,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             "and `>` mark a placeholder; the brackets are not part of the name. No harm done, "
             "renaming is one command, and it matters because the team will see this name:\n"
             "```bash\ngit branch -m <task-branch>\n```",
-            "Send data.stand.message as it is. Keep `git branch -m <task-branch>` as is; they "
+            "Keep `git branch -m <task-branch>` as is; they "
             "replace the placeholder with a meaningful name.",
         )
     if len(in_progress) > 1 and git.get("task") is None:
@@ -1547,7 +1549,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             "two from its title, helps both of us: I can see what you work on, and so can your "
             "teammates. Once you tell me the task, we either rename this branch for it or create a "
             "fresh one.",
-            "Send data.stand.message as it is. Once they name the task: work on this branch is "
+            "Once they name the task: work on this branch is "
             "`git branch -m <task-branch>`; otherwise a new branch from an up-to-date main.",
         )
     if git.get("task") is None:
@@ -1557,7 +1559,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             f"The name `{branch}` says nothing about the task. A good name is short, lowercase, "
             f"hyphens, and says which task: `{example}`. The whole team reads it. Rename with:\n"
             "```bash\ngit branch -m <task-branch>\n```",
-            "Send data.stand.message as it is. Keep the placeholder; they pick the name.",
+            "Keep the placeholder; they pick the name.",
         )
     if task and (_last_run_passing(task) or (ship and task.get("checks") is None)):
         return _ship_stand(git, task)
@@ -1565,7 +1567,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
         return _stand(
             "no_automatic_tests",
             "This task has no automatic tests, so you are the judge. Is it done?",
-            "If they say yes, run `e0 status --ship` and send that data.stand.message as it is.",
+            "If they say yes, run `e0 status --ship` and say that message.",
         )
     if task and done and task.get("checks"):
         return _run_tests_stand(task)
@@ -1573,8 +1575,8 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
         return _stand(
             "tests_failed",
             _tests_failed_message(task),
-            "Fill the braces: one line per failing test on what it expects, from its name and the "
-            "task. Send the rest of data.stand.message as it is. Then help with the code. "
+            "Fill the {line} blank: one line per failing test on what it expects. Then help "
+            "with the code. "
             "`e0 check` runs the same tests when you need the output yourself. When they are "
             "ready to run the tests again, run `e0 status --done`.",
         )
@@ -1585,7 +1587,7 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
         return _stand(
             kind,
             _work_on_branch_message(git, task),
-            "Send data.stand.message as it is. If "
+            "If "
             f"`content/{tid.lower()}/task.md` is missing, run `e0 task {tid}` and write it first, "
             "silently. Then the conversation is about their code. Never start implementing on your own; "
             "when they ask, help as a regular coding agent would. Leave the workflow until they say "
@@ -1667,38 +1669,42 @@ def cmd_status(args):
 
     stand = pick_stand(
         git, in_progress, ready, completed, done="--done" in args, ship="--ship" in args
-    )
+    ) or {}
     if stand:
-        message = "Send data.stand.message as it is."
-        if stand.get("guidance"):
-            message = "Follow data.stand.guidance. " + message
+        message = stand["message"]
+        guidance = stand["guidance"]
     elif in_progress and ready:
         message = f"You are working on {names(in_progress)}. Also ready to start: {names(ready)}."
+        guidance = ""
     elif in_progress:
         message = f"You are working on {names(in_progress)}. The next tasks build on it."
+        guidance = ""
     elif ready:
         message = f"Nothing in progress. Ready to start: {names(ready)}."
+        guidance = ""
     elif len(completed) == len(catalog.get("tasks", [])):
         message = "Every task is complete."
+        guidance = ""
     else:
         message = "Nothing in progress and nothing is ready to start."
+        guidance = ""
 
-    if warnings:
-        message = (
-            f"Send the {len(warnings)} warning(s) in data.warnings first, word for word. "
-            + message
-        )
+    heard = [item["message"] for item in warnings if item.get("message")]
+    if heard:
+        message = "\n\n".join(heard) + ("\n\n" + message if message else "")
+    if any(item.get("kind") == "dependency" for item in warnings):
+        guidance = (
+            "If they choose to skip the unfinished tasks, run `e0 dismiss` with the task id. "
+            + guidance
+        ).strip()
 
     data = {
         "inProgress": in_progress,
         "ready": ready,
         "completed": completed,
-        "warnings": warnings,
         "git": git,
     }
-    if stand:
-        data["stand"] = stand
-    return reply("status", data, message)
+    return reply("status", data, message, guidance)
 
 
 def cmd_dismiss(args):
@@ -1713,7 +1719,7 @@ def cmd_dismiss(args):
     return reply(
         "dismiss",
         {"taskId": task["id"], "until": until.isoformat()},
-        f"The reminder that {task['id']} builds on unfinished tasks is off until {until.isoformat()}.",
+        f"I won't remind you that {task['id']} builds on unfinished tasks until {until.isoformat()}.",
     )
 
 
@@ -1777,6 +1783,7 @@ def resolve_task(command, args):
             command,
             f"There is no task called '{args[0]}'.",
             f"The tasks are: {available}",
+            tell=True,
         )
     return root, catalog, task, None
 
@@ -1797,6 +1804,7 @@ def fetch_canonical(command, root, task_id):
             command,
             f"e0 could not download task {task_id}.",
             "Check your internet connection.",
+            tell=True,
         )
     return text, None
 
@@ -1874,18 +1882,21 @@ def cmd_task(args):
         status = statuses.get(task_id, "not_started")
 
     unmet = unmet_dependencies(task, statuses)
-    message = (
+    guidance = (
         f"The original text of {task_id} is in data.canonical. Apply data.personalization "
         f"and pipe the clean Markdown to 'e0 task {task_id} --write', which checks it and "
         f"writes content/{task_id.lower()}/task.md. "
-        "data.task has what the catalog says about it. Nothing was started."
+        "data.task answers questions about the task. Nothing was started. "
+        "The student hears nothing about this."
     )
     if unmet:
-        # eval 29 (2026-10-07): haiku started T010 instead of the T020 the student asked for.
-        message += (
+        guidance += (
             f" {task_id} builds on {', '.join(unmet)}, not complete yet: if the student asks "
             f"to start {task_id}, start {task_id} itself, never another task in its place."
         )
+    notes = [item["message"] for item in warnings if item.get("message")]
+    if notes:
+        guidance += " " + " ".join(notes)
 
     return reply(
         "task",
@@ -1897,9 +1908,54 @@ def cmd_task(args):
             "paths": task_paths(task_id),
             "status": status,
             "unmetDependencies": unmet,
-            "warnings": warnings,
         },
-        message,
+        guidance=guidance,
+    )
+
+
+def _start_message(task_id, url, first_task):
+    """The note the student hears when a task opens. The first task already includes
+    the Git opening and step 1, so the agent does not choose a version."""
+    link = f"[{task_id}/task.md](content/{task_id.lower()}/task.md)"
+    head = (
+        f"Your task is ready: {link}. The GitHub issue for it: {url}\n"
+        "\n"
+        "💡 Tip: with the file open, press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS) "
+        "to read it in Markdown preview.\n"
+        "\n"
+    )
+    if not first_task:
+        return head + (
+            "Your first move is a branch for this task, from an up-to-date `main`:\n"
+            "```bash\n"
+            "git checkout main\n"
+            "git pull origin main\n"
+            "git checkout -b <task-branch>\n"
+            "```\n"
+            "{line: why main stays clean, and this work comes back as a pull request}"
+        )
+    return head + (
+        "**Using Git**: Engineering teams use a tool called **Git** to work on the same "
+        "codebase together without stepping on each other's toes. A code project is a "
+        "collection of files, and if two people edit the same file at the same time, they "
+        "can overwrite each other's work. Git lets each developer work on their own "
+        "**branch**. On a branch, your changes are separate and safe. When you are ready, "
+        "you **merge** your branch into the **main branch**. This is how many developers "
+        "work on one project without interfering with each other.\n"
+        "\n"
+        "We will use Git on every task in this course. It is one of the most important "
+        "tools in a developer's toolbox.\n"
+        "\n"
+        "Don't worry if this is not all clear yet. We will go through it together. For now, "
+        "we need one thing: your own branch (a **feature branch**) to work on this task.\n"
+        "\n"
+        "Every task starts from the **main branch**. It holds the code that runs in "
+        "**production** (f.t.t. production is the environment where the real product runs "
+        "and real people use it). Let's switch to it. Run this command (you are probably "
+        "on it already):\n"
+        "```bash\n"
+        "git checkout main\n"
+        "```"
     )
 
 
@@ -1923,7 +1979,8 @@ def cmd_start(args):
             "start",
             f"{task_id} is already {'in progress' if state == 'in_progress' else 'complete'}: "
             f"issue #{issue['number']} ({issue['url']}).",
-            "Run 'e0 status' to see where the student is.",
+            "Run 'e0 status' and say its message.",
+            tell=True,
         )
 
     task_path = task_content_dir(root, task_id) / "task.md"
@@ -1962,22 +2019,23 @@ def cmd_start(args):
             }
         )
 
-    # A literal three-command block in the skill's start template beats a rule in another file
-    # for a cheap model, so the first task's pointer to git.md comes from e0 itself.
     first_task = not progress
-    message = (
-        f"{task_id} is in progress: e0 opened its issue, {url}. Send the start template "
-        "with this URL."
-    )
-    if warnings:
-        message = f"Send the {len(warnings)} warning(s) in data.warnings first, word for word. " + message
-    if first_task:
-        message += (
-            " This is the student's first task: in your message, replace the branch part of the "
-            "start template with the opening and step 1 of 'The branch, step by step' in "
-            ".exit0/skills/learning/references/git.md. Step 1 is only `git checkout main`; "
-            "the other commands wait for the student."
+    heard = [item["message"] for item in warnings if item.get("message")]
+    message = _start_message(task_id, url, first_task)
+    if heard:
+        message = "\n\n".join(heard) + "\n\n" + message
+    guidance = ""
+    if any(item.get("kind") == "dependency" for item in warnings):
+        guidance = (
+            f"If they choose to skip the unfinished tasks, run `e0 dismiss {task_id}`. "
+            "Then keep going with this task."
         )
+    if first_task:
+        guidance = (
+            guidance + " After they run the checkout, continue from step 2 of "
+            "The branch, step by step in .exit0/skills/learning/references/git.md. "
+            "One step per message."
+        ).strip()
 
     return reply(
         "start",
@@ -1986,10 +2044,10 @@ def cmd_start(args):
             "task": task,
             "paths": task_paths(task_id),
             "firstTask": first_task,
-            "warnings": warnings,
             "issue": issue,
         },
         message,
+        guidance,
     )
 
 
@@ -2004,16 +2062,15 @@ def write_task_file(root, task_id, canonical_text):
     path = f"content/{task_id.lower()}/task.md"
     result = verify_document(canonical_text, text)
     if result["violations"]:
-        payload = problem(
+        return problem(
             "task",
             "The personalized task changed text it is not allowed to change, so e0 did not "
             "write it. " + " ".join(v["message"] for v in result["violations"]),
             f"Personalize again from data.canonical of 'e0 task {task_id}': keep one branch "
             "per variant, fill retone blocks only when asked, change nothing else, remove the "
-            f"markers. Then pipe it to '{usage}' again.",
+            f"markers. Then pipe it to '{usage}' again. The student hears nothing about this.",
+            data={"violations": result["violations"]},
         )
-        payload["data"] = {"violations": result["violations"]}
-        return payload
 
     task_path = task_content_dir(root, task_id) / "task.md"
     task_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2021,7 +2078,7 @@ def write_task_file(root, task_id, canonical_text):
     return reply(
         "task",
         {"taskId": task_id, "violations": [], "path": path},
-        f"The task file follows the rules. e0 wrote it to {path}.",
+        guidance=f"The task file follows the rules. e0 wrote it to {path}. The student hears nothing about this.",
     )
 
 
@@ -2081,16 +2138,22 @@ def cmd_check(args):
         "warnings": warnings,
     }
 
+    note = " ".join(item["message"] for item in warnings)
     if passed:
-        return reply("check", data, f"All checks for {task_id} pass.")
+        return reply(
+            "check",
+            data,
+            f"All checks for {task_id} pass.",
+            guidance=note,
+        )
 
-    payload = problem(
+    return problem(
         "check",
         f"The checks for {task_id} are not passing yet.",
-        "Read the output above to see what failed. Fix your code and run 'e0 check' again.",
+        "Read data.output. Help the student fix the code, then run 'e0 check' again. " + note,
+        data=data,
+        tell=True,
     )
-    payload["data"] = data
-    return payload
 
 
 def cmd_read(args):
@@ -2113,7 +2176,7 @@ def cmd_read(args):
         return reply(
             "read",
             {"topics": topics},
-            "Use 'e0 read <topic>' to read a knowledge base tutorial.",
+            guidance="Topics are in data.topics. Use 'e0 read <topic>' for one tutorial.",
         )
 
     topic = args[0]
@@ -2129,7 +2192,8 @@ def cmd_read(args):
         return problem(
             "read",
             f"e0 could not download the tutorial for '{topic}'.",
-            "Run 'e0 read' (no topic) to see available topics.",
+            "Run 'e0 read' with no topic to see which tutorials exist.",
+            tell=True,
         )
 
     return reply(
@@ -2139,8 +2203,10 @@ def cmd_read(args):
             "tutorial": tutorial_text,
             "suggestedPath": f"content/knowledge-base/{topic}.md",
         },
-        f"Tutorial for '{topic}' is in data.tutorial. "
-        f"You can write it to content/knowledge-base/{topic}.md if the student wants a local copy.",
+        guidance=(
+            f"Write data.tutorial to content/knowledge-base/{topic}.md, then link that file. "
+            "The student hears the tutorial, not this reply."
+        ),
     )
 
 
@@ -2156,6 +2222,7 @@ def require_pr(command, task, progress):
             f"{task['id']} has no pull request yet.",
             "The student opens a pull request from the task branch into main. "
             "Then run this command again.",
+            tell=True,
         )
     return entry["pr"], None
 
@@ -2248,9 +2315,8 @@ def cmd_review(args):
             "review",
             f"The CI checks of pull request #{pr['number']} are {pr['checks']}, so it is not ready "
             "for a review.",
-            "A pull request is reviewed once its checks pass. Run `e0 status` and send "
-            "data.stand.message as it is. The fix is the student's to make and push; then run "
-            "this command again.",
+            "A pull request is reviewed once its checks pass. Run `e0 status` and say its "
+            "message. The fix is the student's to make and push; then run this command again.",
         )
 
     config = read_config(root)
@@ -2268,9 +2334,11 @@ def cmd_review(args):
     return reply(
         "review",
         {"taskId": task_id, "pr": pr, "rules": rules, "diff": diff},
-        f"Review data.diff against data.rules only: the course rules and the rules of {task_id}. "
-        "Anything the rules do not cover is not part of the review. Then post it: "
-        f"e0 review {task_id} --post <<'EOF' ... EOF",
+        guidance=(
+            f"Review data.diff against data.rules only: the course rules and the rules of {task_id}. "
+            "Anything the rules do not cover is not part of the review. Then post it: "
+            f"e0 review {task_id} --post <<'EOF' ... EOF"
+        ),
     )
 
 
@@ -2287,7 +2355,10 @@ def post_review(root, task, pr):
     return reply(
         "review",
         {"taskId": task["id"], "pr": pr, "posted": True},
-        f"The review is on the pull request: {pr['url']}",
+        guidance=(
+            f"The review is on the pull request: {pr['url']}. "
+            "Say the status message for this moment, and fill its {{line}} blank from the review."
+        ),
     )
 
 
@@ -2352,12 +2423,10 @@ def cmd_questions(args):
     diff, _ = pr_diff(root, entry.get("pr"))
 
     if not questions:
-        message = f"{task_id} has no questions. There is nothing to ask."
-    else:
-        message = (
-            f"{len(questions)} question(s) in data.questions, the correct option in `answer`. "
-            f"Ask them one at a time, in the terms of data.diff. When you are done, write the "
-            f"summary to a file and run 'e0 record {task_id} <file>'."
+        return reply(
+            "questions",
+            {"taskId": task_id, "questions": [], "diff": diff, "recorded": bool(entry.get("questionsRecorded"))},
+            f"{task_id} has no questions. There is nothing to ask.",
         )
     return reply(
         "questions",
@@ -2367,7 +2436,11 @@ def cmd_questions(args):
             "diff": diff,
             "recorded": bool(entry.get("questionsRecorded")),
         },
-        message,
+        guidance=(
+            f"{len(questions)} question(s) in data.questions, the correct option in `answer`. "
+            "Ask them one at a time, in the terms of data.diff, as the learning skill's "
+            f"Comprehension questions section says. Then run 'e0 record {task_id} <file>'."
+        ),
     )
 
 
@@ -2400,7 +2473,15 @@ def cmd_record(args):
     return reply(
         "record",
         {"taskId": task["id"], "issue": issue, "url": out or issue["url"]},
-        f"The comprehension check of {task['id']} is recorded on its issue: {out or issue['url']}",
+        (
+            f"That's {task['id']} done, all the way: issue, branch, tests, pull request, "
+            "review, merge, questions. {line: one line on what they did well} "
+            "{line: the ready tasks, each as id and title, then ask if they want to start one}"
+        ),
+        guidance=(
+            f"Recorded on {out or issue['url']}. Fill the two {{line}} blanks. "
+            "Ready tasks come from `e0 status`, in data.ready."
+        ),
     )
 
 
@@ -2408,7 +2489,7 @@ def cmd_help(args):
     return reply(
         "help",
         {"commands": sorted(COMMANDS)},
-        "Available commands: " + ", ".join(sorted(COMMANDS)),
+        guidance="Commands are in data.commands.",
     )
 
 
@@ -2455,8 +2536,9 @@ def main(argv=None):
         result = problem(
             command,
             f"e0 hit an unexpected error: {exc.__class__.__name__}: {exc}",
-            "This is a bug in e0, not something you did wrong. "
-            "Running the command again usually won't help. Please report this message.",
+            "This is a bug in e0, not something the student did. "
+            "Show them the message, ask them to report it, and do not keep retrying.",
+            tell=True,
         )
 
     print(json.dumps(result, indent=2))

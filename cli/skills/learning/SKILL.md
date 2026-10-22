@@ -14,7 +14,7 @@ Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`) when:
 - On EVERY SESSION, before your first reply, even to a simple "hi" message.
 - Whenever the student's message is related to course progress or status (e.g. which task I am? I ran the tests. I pushed. Can I start task X? PR opened. Issue closed). If unsure, run it anyway.
 
-Every `e0` command prints a JSON object. `data` and `message` mean success. `problem` and `guidance` mean failure: tell the student the `message` in plain words and follow `guidance`. 
+Every `e0` command prints one JSON object: `message`, `guidance`, and `data`. Say `message` when it is not empty. A `{line: ...}` blank is one short personal line. Change nothing else. Follow `guidance` when it is not empty. 
 
 ## The learning protocol
 
@@ -23,7 +23,7 @@ Every task follows the same path. Steer by it, but suggest the next step only wh
 1. **Issue.** `e0 start` opens it. Opened issue = task in progress.
 2. **Branch.** Every task should be branched from an updated `main`.
 3. **Implement.** The student writes the code on the branch, with your help: this is most of the course.
-4. **Tests.** The student runs the task's tests. The run records itself. You run `e0 check` when you need the output yourself.
+4. **Tests.** The student runs the task's tests.
 5. **Pull request into `main`.** The student pushes the branch and opens the PR; CI runs the same tests and maybe more tests the student added.
 6. **Review.** You review the PR against the task's own rules: `e0 review`, then `e0 review --post`.
 7. **Merge and close the issue.** Closed issue = task complete.
@@ -38,7 +38,6 @@ Progress lives only in GitHub: the issues and pull requests of the student's rep
 
 - For any Git question, a Git bug, or in the conversation where the student just opened the first task (`data.firstTask`): follow [Git](.exit0/skills/learning/references/git.md).
 - They say they finished a task, in any words ("done", "it works", "I think that's it"), or ask what is next: run `e0 status --done`. You cannot see that they did; the recorded test run can.
-- Follow `stand.guidance` when it is there, and send `stand.message` as it is. An empty `stand.message` means send nothing.
 
 
 ## Comprehension questions
@@ -51,11 +50,7 @@ Ask one question at a time. Use your question tool when you have one (the one th
 
 `mcq`: their choice equals `answer`: say so in one line. Not: say which option is right and why, in two or three sentences, from the course material. `open`: compare with `outline`; talk until the idea is clear. Never argue past two rounds: give the outline and move on.
 
-Write the summary to `.exit0/questions.md`: `## Comprehension check ({date})`, then one line per question: `- {prompt}: correct | wrong | discussed | skipped`. Run `e0 record <id> .exit0/questions.md`. It goes on the task's issue.
-
-Then send:
-
-> That's {id} done, all the way: issue, branch, tests, pull request, review, merge, questions. {One line on what they did well.} {Ready tasks from `status.ready`, id and title each.} Want to start one?
+Write the summary to `.exit0/questions.md`: `## Comprehension check ({date})`, then one line per question: `- {prompt}: correct | wrong | discussed | skipped`. Run `e0 record <id> .exit0/questions.md` and say its `message`. It goes on the task's issue.
 
 ## Tasks
 
@@ -74,21 +69,7 @@ Right after `e0 task`, personalize `canonical` in memory and pipe it to `e0 task
 
 This is plumbing: write the file and move on. The student hears nothing about it, not even between commands.
 
-When the student asks to start: `e0 start <id>`. Any task, ready or not: a task that builds on unfinished ones gets a `dependency` warning, which you say, and then you start it anyway. Never refuse a task. `e0 start` opens the issue: `data.issue.url`. Then send this, filled in, blank lines included. On the first task (`data.firstTask`), its branch part is instead the opening and step 1 of [The branch, step by step](.exit0/skills/learning/references/git.md#the-branch-step-by-step).
-
-````markdown
-Your task is ready: [<id>/task.md](content/<id>/task.md). The GitHub issue for it: <issue URL>
-
-💡 Tip: with the file open, press `Ctrl+Shift+V` (`Cmd+Shift+V` on macOS) to read it in Markdown preview.
-
-Your first move is a branch for this task, from an up-to-date `main`:
-```bash
-git checkout main
-git pull origin main
-git checkout -b <task-branch>
-```
-{one line on why: main stays clean, the work goes in a branch and comes back as a pull request}
-````
+When the student asks to start: `e0 start <id>`. Any task, ready or not. Never refuse a task. Say its `message` and follow its `guidance`.
 
 ## Helping
 

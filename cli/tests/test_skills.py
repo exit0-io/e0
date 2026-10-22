@@ -101,6 +101,24 @@ def test_learning_skill_lets_e0_own_the_git_missing_message():
     assert "cannot find a git repository" not in skill.lower()
 
 
+def test_learning_skill_tells_success_from_failure_by_the_problem_key():
+    """data and message also appear on failures (e0 check, e0 task --write). A kind means
+    message is the student text, as with git missing or gh logged out. Otherwise message
+    repeats guidance, which the student must not hear."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "No `problem` key means success" in text
+    assert "With a `kind`, send `message`" in text
+    assert "tell them the `problem` in plain words" in text
+    assert "the `message` in plain words" not in text
+
+
+def test_setup_reference_uses_the_problem_not_the_whole_message():
+    """init failures have no kind, so message is the problem plus the guidance."""
+    text = SETUP_REFERENCE.read_text(encoding="utf-8")
+    assert "the `problem` in plain words" in text
+    assert "the `message` in plain words" not in text
+
+
 def test_learning_skill_lets_e0_own_the_merge_conflict_message():
     """A merge conflict is a problem, same as git missing. The skill has no row; git.md
     has no section. Reading e0 already sends the message and follows guidance."""
