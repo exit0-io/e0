@@ -1,10 +1,9 @@
 # Working in this repository
 
-This repo builds the Exit0 framework - a CLI (`e0`) that gives students an
-agent-native learning experience of software engineering skills. The name is written
-**Exit0** everywhere a student or an agent can read it (not "Exit Zero").
+This repo builds the Exit0 framework - a CLI (`e0`) + agent skill that gives students an
+agent-native learning experience of software engineering skills.
 
-A student starting a software engineering course by forking a GitHub template repo, then works through it with their coding agent (just send **hi** in the chat panel to start). The agent fetches the course technical content, instructs the student task by task, runs tests or students' code, reviews PRs, and asks the student questions on its implementation.
+A student starting a software engineering course by forking a GitHub template repo, then works through it with their coding agent. The agent fetches the course technical content, instructs the student task by task, runs tests or students' code, reviews PRs, and asks the student questions on its implementation.
 
 ## Goals to keep in mind
 
@@ -50,8 +49,6 @@ learning process.
 - `cli/` — the `e0` CLI and its skills
 - `cli/tests/evals/` — agent eval scenarios (see above)
 - `courses/[course-name]/content` and `courses/[course-name]/template` — course content and template repos students fork. Each is its own git repo. The template ships a verbatim copy of `cli/skills/learning/`; a test enforces it, so copy after every skill change.
-- `docs/superpowers/specs/` and `docs/superpowers/plans/` — design and implementation
-  history; read them before changing behavior they describe
 
 ## Running tests
 

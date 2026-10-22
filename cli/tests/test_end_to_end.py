@@ -21,20 +21,21 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
     #    personalizes it: one variant branch, no markers, a note where retone allows it.
     payload, _ = run_e0(["task", "T010"], student_repo)
     assert payload["data"]["task"]["purpose"]
+    #    e0 checks the text and writes the task file.
     text = personalize(payload, note="You know Python well, so this will be quick.")
-    task_file = student_repo / "content" / "t010" / "task.md"
-    task_file.parent.mkdir(parents=True, exist_ok=True)
-    task_file.write_text(text, encoding="utf-8")
+    payload, _ = run_e0(["task", "T010", "--write"], student_repo, stdin=text)
+    assert "problem" not in payload, payload
+    assert (student_repo / "content" / "t010" / "task.md").read_text(encoding="utf-8") == text
     assert "<!--" not in text
 
-    # 5. Student asks to start. e0 checks the file and hands back the issue.
+    # 5. Student asks to start. e0 opens the issue. From now on that issue
+    #    is the progress record.
     payload, _ = run_e0(["start", "T010"], student_repo)
     assert "problem" not in payload, payload
     assert payload["data"]["warnings"] == []
-    assert payload["data"]["issue"]["body"] == text
+    assert payload["data"]["issue"]["url"] == "https://github.com/student/repo/issues/1"
 
-    # 6. The agent opens the issue. From now on that issue is the progress record.
-    set_issues(student_repo, [("T010", "OPEN")])
+    # 6. The issue is open, so T010 is in progress.
     payload, _ = run_e0(["status"], student_repo)
     assert [t["id"] for t in payload["data"]["inProgress"]] == ["T010"]
 
@@ -70,15 +71,12 @@ def test_a_student_can_go_from_bootstrap_to_passing_checks(
     assert tracked_changes == [], ".exit0/ must never appear in git status"
 
 
-def test_verify_catches_altered_fixed_text(run_e0, student_repo, write_task_file):
+def test_task_write_catches_altered_fixed_text(run_e0, student_repo, personalize):
     run_e0(["init"], student_repo)
-    text = write_task_file(student_repo, "T010")
-    task_file = student_repo / "content" / "t010" / "task.md"
-    task_file.write_text(
-        text.replace("**standard library**", "**the requests library**"), encoding="utf-8"
-    )
+    payload, _ = run_e0(["task", "T010"], student_repo)
+    text = personalize(payload).replace("**standard library**", "**the requests library**")
 
-    payload, code = run_e0(["verify", "T010"], student_repo)
+    payload, code = run_e0(["task", "T010", "--write"], student_repo, stdin=text)
     assert code == 0
     assert "problem" in payload
     assert payload["data"]["violations"]
@@ -89,8 +87,8 @@ def test_every_command_survives_a_hostile_environment(run_e0, tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     for command in [
-        "status", "catalog", "task", "start", "verify", "check", "read", "init", "help",
-        "review", "post-review", "questions", "record", "dismiss",
+        "status", "catalog", "task", "start", "check", "read", "init", "help",
+        "review", "questions", "record", "dismiss",
     ]:
         payload, code = run_e0([command], empty)
         assert code == 0, f"{command} must exit 0"

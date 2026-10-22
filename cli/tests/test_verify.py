@@ -69,32 +69,50 @@ def test_malformed_canonical_markers_are_a_structure_violation(e0mod):
     assert any(v["kind"] == "structure" for v in result["violations"])
 
 
-def test_cmd_verify_passes_for_a_correctly_personalized_file(run_e0, student_repo, write_task_file):
+def test_task_write_writes_a_correctly_personalized_file(run_e0, student_repo, personalize):
     run_e0(["init"], student_repo)
-    write_task_file(student_repo, "T010", note="Skim this section.")
-    payload, code = run_e0(["verify", "T010"], student_repo)
+    payload, _ = run_e0(["task", "T010"], student_repo)
+    text = personalize(payload, note="Skim this section.")
+    payload, code = run_e0(["task", "T010", "--write"], student_repo, stdin=text)
     assert code == 0
     assert "problem" not in payload
+    assert payload["data"]["path"] == "content/t010/task.md"
+    assert (student_repo / "content" / "t010" / "task.md").read_text(encoding="utf-8") == text
 
 
-def test_cmd_verify_fails_when_fixed_text_is_altered(run_e0, student_repo, write_task_file):
+def test_task_write_overwrites_an_old_task_file(run_e0, student_repo, write_task_file):
     run_e0(["init"], student_repo)
-    text = write_task_file(student_repo, "T010")
     task_file = student_repo / "content" / "t010" / "task.md"
-    task_file.write_text(
-        text.replace("**standard library**", "**requests library**"), encoding="utf-8"
-    )
-    payload, code = run_e0(["verify", "T010"], student_repo)
+    task_file.parent.mkdir(parents=True)
+    task_file.write_text("an old file\n", encoding="utf-8")
+    text = write_task_file(student_repo, "T010")
+    assert task_file.read_text(encoding="utf-8") == text
+
+
+def test_task_write_refuses_altered_fixed_text_and_writes_nothing(
+    run_e0, student_repo, personalize
+):
+    run_e0(["init"], student_repo)
+    payload, _ = run_e0(["task", "T010"], student_repo)
+    text = personalize(payload).replace("**standard library**", "**requests library**")
+    payload, code = run_e0(["task", "T010", "--write"], student_repo, stdin=text)
     assert code == 0
     assert "problem" in payload
     assert payload["data"]["violations"]
-    assert "e0 task T010" in payload["guidance"]
+    assert "e0 task T010 --write" in payload["guidance"]
+    assert not (student_repo / "content" / "t010" / "task.md").exists()
 
 
-def test_cmd_verify_before_the_file_exists_points_at_e0_task(run_e0, student_repo):
+def test_task_write_without_input_is_a_problem(run_e0, student_repo):
     run_e0(["init"], student_repo)
-    payload, code = run_e0(["verify", "T010"], student_repo)
+    payload, code = run_e0(["task", "T010", "--write"], student_repo)
     assert code == 0
     assert "problem" in payload
-    assert "e0 task T010" in payload["guidance"]
+    assert "e0 task T010 --write" in payload["guidance"]
 
+
+def test_verify_is_not_a_command(run_e0, student_repo):
+    """2026-10-07: checking the task file is part of `e0 task --write`, not its own command."""
+    run_e0(["init"], student_repo)
+    payload, _ = run_e0(["verify", "T010"], student_repo)
+    assert "problem" in payload

@@ -51,8 +51,8 @@ def test_init_outside_a_git_repo_gives_guidance(run_e0, tmp_path):
     empty.mkdir()
     payload, code = run_e0(["init"], empty)
     assert code == 0
-    assert "problem" in payload
-    assert payload["guidance"]
+    assert payload["kind"] == "not_a_git_repo"
+    assert "data.message" in payload["guidance"]
 
 
 def test_init_installs_the_learning_skill_with_its_references(run_e0, student_repo):

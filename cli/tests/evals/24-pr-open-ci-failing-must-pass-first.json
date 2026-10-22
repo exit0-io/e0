@@ -30,7 +30,7 @@
         "Details"
       ],
       "must_not_run": [
-        "e0 post-review",
+        "e0 review \\S+ --post",
         "gh pr review",
         "git add",
         "git commit",

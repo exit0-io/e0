@@ -33,7 +33,7 @@ def test_review_hands_over_the_diff_and_the_rules_only(run_e0, with_pr):
     assert "def greet(name)" in data["diff"]
     assert "Do not close a pull request before it has been reviewed" in data["rules"]["course"]
     assert "produced by a function" in data["rules"]["task"]
-    assert "only" in payload["message"] and "e0 post-review T010" in payload["message"]
+    assert "only" in payload["message"] and "e0 review T010 --post" in payload["message"]
 
 
 def test_the_rules_never_touch_the_disk(run_e0, with_pr):
@@ -73,14 +73,15 @@ def test_review_on_an_unstarted_task_is_a_problem(run_e0, with_pr):
     assert "problem" in payload
 
 
-# ---------------------------------------------------------------- e0 post-review
+# ---------------------------------------------------------------- e0 review --post
+
+REVIEW = "## Review of T010\n\nThe greeting is a function. Good.\n"
 
 
-def test_post_review_posts_a_marked_review_that_status_counts(run_e0, with_pr, tmp_path):
-    review = tmp_path / "review.md"
-    review.write_text("## Review of T010\n\nThe greeting is a function. Good.\n", encoding="utf-8")
-    payload, code = run_e0(["post-review", "T010", str(review)], with_pr)
+def test_review_post_posts_a_marked_review_that_status_counts(run_e0, with_pr):
+    payload, code = run_e0(["review", "T010", "--post"], with_pr, stdin=REVIEW)
     assert code == 0 and "problem" not in payload, payload
+    assert payload["data"]["posted"] is True
     assert payload["data"]["pr"]["url"].endswith("/pull/101")
     assert "pull/101" in payload["message"]
 
@@ -92,22 +93,24 @@ def test_post_review_posts_a_marked_review_that_status_counts(run_e0, with_pr, t
     status, _ = run_e0(["status"], with_pr)
     assert status["data"]["inProgress"][0]["pr"]["reviews"] == 1
 
-    run_e0(["post-review", "T010", str(review)], with_pr)
+    run_e0(["review", "T010", "--post"], with_pr, stdin=REVIEW)
     status, _ = run_e0(["status"], with_pr)
     assert status["data"]["inProgress"][0]["pr"]["reviews"] == 2, "a second review is fine"
 
 
-def test_post_review_needs_a_file_with_text(run_e0, with_pr, tmp_path):
-    payload, _ = run_e0(["post-review", "T010"], with_pr)
-    assert "problem" in payload and "<file>" in payload["guidance"]
+def test_review_post_leaves_no_file_in_the_student_repo(run_e0, with_pr):
+    """2026-10-07: the review stays in memory, from the agent through stdin to GitHub."""
+    before = {p for p in with_pr.rglob("*") if ".git" not in p.parts}
+    run_e0(["review", "T010", "--post"], with_pr, stdin=REVIEW)
+    after = {p for p in with_pr.rglob("*") if ".git" not in p.parts}
+    assert [p for p in after - before if PRS_FILE not in str(p)] == []
 
-    payload, _ = run_e0(["post-review", "T010", str(tmp_path / "missing.md")], with_pr)
-    assert "problem" in payload and "does not exist" in payload["problem"]
 
-    empty = tmp_path / "empty.md"
-    empty.write_text("\n", encoding="utf-8")
-    payload, _ = run_e0(["post-review", "T010", str(empty)], with_pr)
-    assert "problem" in payload and "empty" in payload["problem"]
+def test_review_post_needs_text_on_stdin(run_e0, with_pr):
+    for stdin in ("", "\n  \n"):
+        payload, _ = run_e0(["review", "T010", "--post"], with_pr, stdin=stdin)
+        assert "problem" in payload and "nothing to post" in payload["problem"]
+        assert "e0 review T010 --post <<'EOF'" in payload["guidance"]
 
 
 # ---------------------------------------------------------------- e0 questions
