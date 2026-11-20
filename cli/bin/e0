@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """e0 — the Exit0 CLI.
 
 Holds everything deterministic in a course workflow: which tasks are ready, what their rules
