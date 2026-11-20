@@ -1311,8 +1311,9 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             f"Before we move on, a few questions about what you built in {task_id}. They are "
             "not a test; they help the ideas stick. Ready?",
             f"Run `e0 questions {task_id}`. Ask the questions one at a time, as the learning "
-            f"skill's Comprehension questions section says, and record them with "
-            f"`e0 record {task_id} .exit0/questions.md`.",
+            f"skill's Comprehension questions section says. When the set is done, or they "
+            f"decline, record it with `e0 record {task_id} <<'EOF'`. The comment on the issue "
+            "is the record.",
         )
     if not in_progress:
         where = (
@@ -2123,26 +2124,6 @@ def require_pr(command, task, progress):
         )
     return entry["pr"], None
 
-def read_body_file(command, args, what):
-    """The text the agent wrote for e0 to post. Returns (text, None) or (None, problem)."""
-    if len(args) < 2:
-        return None, problem(
-            command,
-            f"e0 {command} needs a task id and a file with {what}.",
-            f"Use: e0 {command} <id> <file>",
-        )
-    path = pathlib.Path(args[1])
-    if not path.exists():
-        return None, problem(
-            command,
-            f"The file {args[1]} does not exist.",
-            f"Write {what} to a file first, then run e0 {command} <id> <file>.",
-        )
-    text = path.read_text(encoding="utf-8")
-    if not text.strip():
-        return None, problem(command, f"The file {args[1]} is empty.", f"Write {what} into it first.")
-    return text, None
-
 def cmd_review(args):
     """Hand the agent what a review needs: the PR diff and the rules of this task. The rules
     are the whole standard: the review checks them and nothing else. With --post, post the
@@ -2210,9 +2191,10 @@ def post_review(root, task, pr):
         ),
     )
 
-def decode_question(question):
+def decode_question(question, shuffle=True):
     """A question the agent can ask and grade: the correct option in `answer`, options
-    shuffled so the position teaches nothing. Open questions carry their outline."""
+    shuffled so the position teaches nothing. Open questions carry their outline.
+    The record lists options in course order, so it passes shuffle=False."""
     decoded = {
         "id": question.get("id"),
         "type": question.get("type"),
@@ -2229,7 +2211,8 @@ def decode_question(question):
             ),
             None,
         )
-        random.shuffle(options)
+        if shuffle:
+            random.shuffle(options)
         decoded.update({"options": options, "answer": answer})
     else:
         decoded.update(
@@ -2240,7 +2223,7 @@ def decode_question(question):
         )
     return decoded
 
-def fetch_questions(config, path):
+def fetch_questions(config, path, shuffle=True):
     text = fetch_text(raw_content_url(config, path))
     if text is None:
         return []
@@ -2248,7 +2231,22 @@ def fetch_questions(config, path):
         bank = json.loads(text)
     except ValueError:
         return []
-    return [decode_question(q) for q in bank.get("questions", []) if isinstance(q, dict)]
+    return [
+        decode_question(q, shuffle=shuffle)
+        for q in bank.get("questions", [])
+        if isinstance(q, dict)
+    ]
+
+def questions_for_task(config, task, shuffle=True):
+    """The task's own bank, then each related topic's bank."""
+    questions = fetch_questions(
+        config, f"tasks/{task['id'].lower()}/questions.json", shuffle=shuffle
+    )
+    for topic in task.get("relatedTopics", []):
+        questions.extend(
+            fetch_questions(config, f"knowledgebase/{topic}/questions.json", shuffle=shuffle)
+        )
+    return questions
 
 def cmd_questions(args):
     """The comprehension questions of a task: its own bank plus its related topics, with the
@@ -2259,9 +2257,7 @@ def cmd_questions(args):
 
     config = read_config(root)
     task_id = task["id"]
-    questions = fetch_questions(config, f"tasks/{task_id.lower()}/questions.json")
-    for topic in task.get("relatedTopics", []):
-        questions.extend(fetch_questions(config, f"knowledgebase/{topic}/questions.json"))
+    questions = questions_for_task(config, task)
 
     # The diff and the record are nice to have: the questions work without GitHub.
     progress, _ = github_progress(root, catalog)
@@ -2286,19 +2282,158 @@ def cmd_questions(args):
         guidance=(
             f"{len(questions)} question(s) in data.questions, the correct option in `answer`. "
             "Ask them one at a time, in the terms of data.diff, as the learning skill's "
-            f"Comprehension questions section says. Then run 'e0 record {task_id} <file>'."
+            "Comprehension questions section says. When the set is done, or they decline, run "
+            f"`e0 record {task_id} <<'EOF'` with the JSON that section describes."
         ),
     )
 
+def _alert_lines(kind, lines):
+    """A GitHub alert. GitHub strips style attributes, so TIP (green) and CAUTION (red)
+    are the backgrounds a comment is allowed to have."""
+    quoted = [f"> [!{kind}]"]
+    for line in lines:
+        quoted.append(">" if line == "" else f"> {line}")
+    return quoted
+
+def _checkbox(option, picked):
+    mark = "x" if option == picked else " "
+    return f"- [{mark}] {option}"
+
+def _flatten(text):
+    return " ".join(str(text).split())
+
+def render_mcq(question, result):
+    """One multiple-choice question: every option once, in course order. The pick and the
+    right option sit in a colored alert; the rest stay plain checkboxes."""
+    lines = [f"### {_flatten(question.get('prompt', ''))}", ""]
+    if result.get("skipped") is True:
+        lines.extend(_alert_lines("NOTE", ["Skipped."]))
+        return lines
+    picked = result.get("picked")
+    answer = question.get("answer")
+    plain = []
+
+    def flush():
+        if plain:
+            lines.extend(plain)
+            lines.append("")
+            plain.clear()
+
+    for option in question.get("options", []):
+        box = _checkbox(option, picked)
+        if option == picked and picked == answer:
+            flush()
+            lines.extend(_alert_lines("TIP", ["Correct", "", box]))
+            lines.append("")
+        elif option == picked:
+            flush()
+            lines.extend(_alert_lines("CAUTION", ["Not this one", "", box]))
+            lines.append("")
+        elif option == answer:
+            flush()
+            lines.extend(_alert_lines("TIP", ["The answer", "", box]))
+            lines.append("")
+        else:
+            plain.append(box)
+    flush()
+    return lines
+
+def render_open(question, result):
+    """An open question: the discussion summary, green when the outline was covered."""
+    lines = [f"### {_flatten(question.get('prompt', ''))}", ""]
+    if result.get("skipped") is True:
+        lines.extend(_alert_lines("NOTE", ["Skipped."]))
+        return lines
+    kind = "CAUTION" if result.get("missed") is True else "TIP"
+    summary = str(result.get("summary") or "").strip()
+    lines.extend(_alert_lines(kind, summary.splitlines() or [""]))
+    return lines
+
+def _record_problem(summary):
+    return problem(
+        "record",
+        summary,
+        "Pass one JSON object through a quoted heredoc: `e0 record <id> <<'EOF' ... EOF`. "
+        'Either {"skipped": true}, or {"results": [one entry per question]}. '
+        'An mcq entry is {"id", "picked"} with the option text. '
+        'An open entry is {"id", "summary", "missed"} with missed true or false. '
+        'A question they skip is {"id", "skipped": true}.',
+    )
+
+def build_questions_comment(questions, payload, today):
+    """The issue comment for a finished check. Returns (text, None) or (None, problem)."""
+    if not isinstance(payload, dict):
+        return None, _record_problem("e0 record needs one JSON object.")
+    if payload.get("skipped") is True:
+        if "results" in payload:
+            return None, _record_problem(
+                'A declined check is {"skipped": true} on its own, with no results.'
+            )
+        return f"Skipped by the student on {today}.", None
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return None, _record_problem("e0 record needs a results list, or {\"skipped\": true}.")
+    by_id = {}
+    for item in results:
+        if not isinstance(item, dict) or not item.get("id"):
+            return None, _record_problem("Each result needs an id.")
+        if item["id"] in by_id:
+            return None, _record_problem(f"Question {item['id']} is in the results twice.")
+        by_id[item["id"]] = item
+    expected = [question["id"] for question in questions]
+    if set(by_id) != set(expected):
+        missing = [qid for qid in expected if qid not in by_id]
+        extra = [qid for qid in by_id if qid not in set(expected)]
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(missing))
+        if extra:
+            detail.append("unknown " + ", ".join(extra))
+        return None, _record_problem(
+            f"The results have to cover every question of this task: {'; '.join(detail)}."
+        )
+    blocks = [f"## Comprehension check ({today})", ""]
+    for question in questions:
+        result = by_id[question["id"]]
+        skipped = result.get("skipped") is True
+        if question.get("type") == "mcq":
+            if not skipped:
+                if not question.get("answer"):
+                    return None, _record_problem(
+                        f"e0 cannot tell which option is right for {question['id']}, so it did not post."
+                    )
+                if result.get("picked") not in question.get("options", []):
+                    return None, _record_problem(
+                        f"The pick for {question['id']} is not one of its options."
+                    )
+            blocks.extend(render_mcq(question, result))
+        else:
+            if not skipped:
+                if not str(result.get("summary") or "").strip():
+                    return None, _record_problem(f"Question {question['id']} needs a summary.")
+                if not isinstance(result.get("missed"), bool):
+                    return None, _record_problem(
+                        f"Question {question['id']} needs missed true or false."
+                    )
+            blocks.extend(render_open(question, result))
+        blocks.append("")
+    return "\n".join(blocks).strip(), None
+
 def cmd_record(args):
     """Record the comprehension check as a comment on the task's issue. GitHub is the only
-    record: nothing is kept locally."""
+    record: the agent pipes JSON in, and nothing is written in the repo."""
     root, catalog, task, failure = resolve_task("record", args)
     if failure:
         return failure
-    text, failure = read_body_file("record", args, "the summary of the comprehension check")
+    text, failure = read_body_stdin(
+        "record", f"e0 record {task['id']}", "the comprehension results as JSON"
+    )
     if failure:
         return failure
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return _record_problem("e0 record could not read the JSON on its input.")
     progress, failure = require_progress("record", root, catalog)
     if failure:
         return failure
@@ -2310,8 +2445,20 @@ def cmd_record(args):
             "Only a task that was started has an issue.",
         )
 
+    if not (isinstance(payload, dict) and payload.get("skipped") is True):
+        questions = questions_for_task(read_config(root), task, shuffle=False)
+        if not questions:
+            return _record_problem(f"{task['id']} has no questions to record.")
+    else:
+        questions = []
+    comment, failure = build_questions_comment(
+        questions, payload, datetime.date.today().isoformat()
+    )
+    if failure:
+        return failure
+
     issue = entry["issue"]
-    out, error = gh_post(root, QUESTIONS_MARKER, text, "issue", "comment", str(issue["number"]))
+    out, error = gh_post(root, QUESTIONS_MARKER, comment, "issue", "comment", str(issue["number"]))
     if error:
         return github_problem(
             "record", root, f"e0 could not comment on issue #{issue['number']}", error
@@ -2325,8 +2472,8 @@ def cmd_record(args):
             "{line: the ready tasks, each as id and title, then ask if they want to start one}"
         ),
         guidance=(
-            f"Recorded on {out or issue['url']}. Fill the two {{line}} blanks. "
-            "Ready tasks come from `e0 status`, in data.ready."
+            f"Recorded on {out or issue['url']}. The comment lists each question with their "
+            "answer. Fill the two {{line}} blanks. Ready tasks come from `e0 status`, in data.ready."
         ),
     )
 

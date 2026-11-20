@@ -13,6 +13,7 @@ Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`) when:
 
 - On EVERY SESSION, before your first reply, even to a simple "hi" message.
 - Whenever the student's message is related to course progress or status (e.g. which task I am? I ran the tests. I pushed. Can I start task X? PR opened. Issue closed). If unsure, run it anyway.
+- When you are guided to run an `e0` command in `guidance`.
 
 Every `e0` command prints one JSON object: `message`, `guidance`, and `data`. Say `message` when it is not empty. A `{line: ...}` blank is one short personal line. Change nothing else. Follow `guidance` when it is not empty. 
 
@@ -20,14 +21,14 @@ Every `e0` command prints one JSON object: `message`, `guidance`, and `data`. Sa
 
 Every task follows the same path. Steer by it, but suggest the next step only when it fits the conversation.
 
-1. **Issue.** `e0 start` opens it. Opened issue = task in progress.
-2. **Branch.** Every task should be branched from an updated `main`.
-3. **Implement.** The student writes the code on the branch, with your help: this is most of the course.
-4. **Tests.** The student runs the task's tests.
-5. **Pull request into `main`.** The student pushes the branch and opens the PR; CI runs the same tests and maybe more tests the student added.
-6. **Review.** You review the PR against the task's own rules: `e0 review`, then `e0 review --post`.
-7. **Merge and close the issue.** Closed issue = task complete.
-8. **Comprehension questions** on their own code: `e0 questions`, recorded on the issue with `e0 record`.
+1. **Issue.** `e0 start` opens it as a GitHub issue. Opened issue = task in progress.
+2. **Branch.** Every task should be branched from an updated `main`. The full Git workflow we use throughout the course is explained in [Git](.exit0/skills/learning/references/git.md).
+3. **Implement.** The student writes the code on the branch, with your help.
+4. **Tests.** The student runs the task's tests locally.
+5. **Pull request into `main`.** The student pushes the branch and opens the PR; CI runs the tests and maybe more tests the student added.
+6. **Review.** You review the PR against the task's own rules: `e0 review`.
+7. **Merge and close the issue.** The student merges the PR and closes the issue. Closed issue = task complete.
+8. **Comprehension questions** You ask them questions on their own code: `e0 questions`.
 
 Progress lives only in GitHub: the issues and pull requests of the student's repo, which `e0` reads.
 
@@ -44,13 +45,20 @@ Progress lives only in GitHub: the issues and pull requests of the student's rep
 
 `e0 status` already sent the opening. Each question in `data.questions` is `mcq` (`options`, `answer`) or `open` (`outline`). `data.diff` is the student's own code from the pull request.
 
-If they decline, write `Skipped by the student on {date}.` to `.exit0/questions.md`, run `e0 record <id> .exit0/questions.md`, and move on. It is recorded so they are not asked again.
-
-Ask one question at a time. Use your question tool when you have one (the one that shows choices to pick): the options of an `mcq` as its choices, free text for `open`. Otherwise ask in the chat. Personalize the prompt to their own code: name the file and line from `data.diff` and quote what they wrote ("In `init.sh`, line 4, you used `|`. What does it do?"). The options stay word for word, in the order `e0` gave them. The idea the question tests never changes.
+Use your question tool when you have one (the one that shows choices to pick): the options of an `mcq` as its choices, free text for `open`. Otherwise ask in the chat. Personalize the prompt to their own code: name the file and line from `data.diff` and quote what they wrote. The options stay word for word, in the order `e0` gave them. The idea the question tests never changes.
 
 `mcq`: their choice equals `answer`: say so in one line. Not: say which option is right and why, in two or three sentences, from the course material. `open`: compare with `outline`; talk until the idea is clear. Never argue past two rounds: give the outline and move on.
 
-Write the summary to `.exit0/questions.md`: `## Comprehension check ({date})`, then one line per question: `- {prompt}: correct | wrong | discussed | skipped`. Run `e0 record <id> .exit0/questions.md` and say its `message`. It goes on the task's issue.
+When the set is done, or they decline, record it on the task's issue. That comment is the only copy, so they can look their answers up later. Pipe one JSON object to `e0 record <id> <<'EOF'`, then say its `message`. Nothing is written in the repo.
+
+They decline: `{"skipped": true}`. e0 posts `Skipped by the student on {date}.`, so they are not asked again.
+
+They answer: `{"results": [ ... ]}`, one entry per question in `data.questions`. A question they skip on its own is `{"id", "skipped": true}`.
+
+- `mcq`: `{"id", "picked"}`. `picked` is the option text they chose, word for word.
+- `open`: `{"id", "summary", "missed"}`. `summary` is two or three sentences: what they said, and any point from `outline` they missed. `missed` is true when they missed a point from the outline.
+
+`e0` posts each multiple-choice question as checkboxes, with `[x]` on what they picked. A right pick is on a green background. A wrong pick is on a red one, and the right option is on green beside it. An open question is its summary: green when `missed` is false, red when `missed` is true.
 
 ## Tasks
 
@@ -75,8 +83,6 @@ When the student asks to start: `e0 start <id>`. Any task, ready or not. Never r
 
 Course materials are the source of truth. Read the relevant one before answering: `.exit0/catalog.json`, the task file, `e0 read <topic>` for knowledge base tutorials (write `data.tutorial` to `data.suggestedPath`, then link the file). Point to them. Follow the course's way even where industry differs. When the course does not cover something, say so first ("This is not in the course material, but ...").
 
-Extra `.md` files in `.exit0/skills/` come from the course. Read them too: they add to this skill.
-
 ## Voice
 
 Students may be complete beginners. Short sentences, common words, one idea at a time. Explain each command you ask them to run, and why. Keep messages short: the task file and tutorials carry the detail.
@@ -86,7 +92,7 @@ Link only what exists: files on disk, `[greeting.py](greeting.py)`, and issues a
 ## Guardrails
 
 - Never start implementing a task on your own: the student may want to solve it themselves. When they ask for help, help as a regular coding agent would, including writing code.
-- ONLY the student runs git and GitHub commands that change their repo: branch, commit, push, PR, merge, closing or reopening issues. You can give the command and the reason. The exception: what `e0` posts for you (the task issue, the review, the record of the questions). Commits: `git add <files>` (named files, so nothing slips in), `git commit -m "..."`.
+- ONLY the student runs git and GitHub commands that change their repo: branch, commit, push, PR, merge, closing or reopening issues. You can give the command and the reason. Commits: `git add <files>` (named files, so nothing slips in), `git commit -m "..."`.
 - `e0` is yours alone: never ask the student to run it. Run it and say what it means.
 - A task starts only when the student asks.
 - `.exit0/` is managed by `e0`. Its skill files, this one and its references, are written for you: never link them or send the student to read them.
