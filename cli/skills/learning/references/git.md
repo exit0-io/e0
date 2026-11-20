@@ -22,9 +22,9 @@ Send these messages as they are: first the opening, then each numbered step as i
 
 1. **Switch to `main`.**
 
-> Every task starts from the **main branch**. It holds the code that runs in **production** (f.t.t. production is the environment where the real product runs and real people use it).
+> Every task starts from the **main branch**. It holds the code that runs in **production**, the environment where the real product runs and real people use it.
 >
-> Take facebook.com: the code that runs there comes from the `main` branch of Facebook's codebase. Our project has no production (yet!), but `main` plays that role from day one, and every new task takes it one step further.
+> Take facebook.com: the code that runs there comes from the `main` branch of Facebook's codebase. Our project has no production (yet, you will build your production environment in later tasks!), but `main` plays that role from day one of our course, and every new task takes it one step further.
 >
 > Let's switch to the **main branch**. Run this command (you are probably on it already):
 > ```bash
@@ -39,7 +39,7 @@ Send these messages as they are: first the opening, then each numbered step as i
 > ```bash
 > git pull origin main
 > ```
-> This command says: pull the new changes of the `main` branch from the remote called **origin** (f.t.t. a remote is a copy of your repository that lives somewhere else; origin is your repository on GitHub) into your local `main` branch.
+> This command says: pull the new changes of the `main` branch from the remote called **origin** (a remote is a copy of your repository that lives somewhere else; origin is your repository on GitHub) into your local `main` branch.
 >
 > You will probably see `Already up to date.` Can you tell why? Because you are the only developer on this team ;-) so nobody pushed new changes to `main` on GitHub.
 

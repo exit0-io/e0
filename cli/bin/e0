@@ -1298,7 +1298,7 @@ def _push_message(git):
             "```"
         )
     parts.append(
-        "Your work lives only on your computer so far. Time to **push** (f.t.t. push sends the "
+        "Your work lives only on your computer so far. Time to **push** (sends the "
         "commits of your branch to the remote, origin, so GitHub has a copy too):\n"
         "```bash\n"
         f"git push -u origin {branch}\n"
@@ -1315,7 +1315,7 @@ def _open_pr_message(git, task):
     tid, title = task["id"], task.get("title") or ""
     return (
         f"Now, [open a pull request](content/knowledge-base/pull-requests.md) from `{branch}` "
-        "into `main`. A **pull request** (f.t.t. a pull request is a request to merge your "
+        "into `main`. A **pull request** (a request to merge your "
         "branch into main: the team sees the change, the tests run on it, and someone reviews "
         "it before it goes in) is how work reaches production in every team. The link explains "
         "it and shows how to open one on GitHub, step by step. "
@@ -1341,8 +1341,8 @@ def _ship_stand(git, task):
 def _run_tests_message(command):
     return (
         "Before we send your work in, let's run the tests. Every task comes with "
-        "**school checks** (f.t.t. school checks are small automatic tests that say whether "
-        "your code does what the task asks). Run:\n"
+        "**school checks**, which are small automatic tests that say whether "
+        "your code does what the task asks. Run:\n"
         "```bash\n"
         f"{command}\n"
         "```\n"
@@ -1421,15 +1421,14 @@ def pick_stand(git, in_progress, ready, completed, done=False, ship=False):
             if checks == "pending":
                 message = (
                     f"Your pull request is open: {url}. The checks on it are still running. **CI** "
-                    "(f.t.t. CI, continuous integration, is a service that runs the tests on every "
+                    "(Continuous Integration - is a service that runs the tests on every "
                     "push, so a broken change is caught before it is merged) runs the same school "
                     "checks you ran. Give it a minute, then tell me."
                 )
             else:
                 branch = pr.get("branch") or git.get("branch") or "your branch"
                 message = (
-                    f"Your pull request is open: {url}, but its checks are red. **CI** (f.t.t. CI, "
-                    "continuous integration, is a service that runs the tests on every push, so a "
+                    f"Your pull request is open: {url}, but its checks are red. **CI** (Continuous Integration - is a service that runs the tests on every push, so a "
                     "broken change is caught before it is merged) ran the school checks on your "
                     "branch, and some fail. A pull request is merged only when its checks pass; that "
                     "is the rule in every team, and here too. On the pull request page, click "
@@ -1973,8 +1972,8 @@ def _start_message(task_id, url, first_task):
         "we need one thing: your own branch (a **feature branch**) to work on this task.\n"
         "\n"
         "Every task starts from the **main branch**. It holds the code that runs in "
-        "**production** (f.t.t. production is the environment where the real product runs "
-        "and real people use it). Let's switch to it. Run this command (you are probably "
+        "**production**, the environment where the real product runs "
+        "and real people use it. Let's switch to it. Run this command (you are probably "
         "on it already):\n"
         "```bash\n"
         "git checkout main\n"
