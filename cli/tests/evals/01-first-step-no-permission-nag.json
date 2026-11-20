@@ -1,12 +1,17 @@
 {
-  "from": "conversation.md line 52: drop the 'allow e0 to run without asking' note; keep the cheap-model tip",
-  "bootstrap": true,
+  "from": "conversation.md line 52: drop the 'allow e0 to run without asking' note. 2026-11-20: e0 ships in the template, so the first hi does not download it",
   "turns": [
     {
       "say": "hi",
-      "must_run": ["e0 init", "e0 status"],
-      "must_match": ["welcome", "haiku|cheap|small.{0,20}model"],
-      "must_not_match": ["without asking", "allow .{0,30}e0", "without confirmation"]
+      "must_run": ["e0 status"],
+      "must_not_run": ["curl", "\\bpip3?\\b"],
+      "must_not_match": [
+        "without asking",
+        "allow .{0,30}e0",
+        "without confirmation",
+        "raw\\.githubusercontent\\.com/exit0-io/e0/",
+        "RELEASE="
+      ]
     }
   ]
 }

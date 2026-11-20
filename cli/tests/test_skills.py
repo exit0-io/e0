@@ -7,7 +7,6 @@ E0_PATH = ROOT / "cli" / "bin" / "e0"
 
 # The learning skill is the single entry point. Everything else is a reference inside it.
 EXPECTED = {"learning"}
-SETUP_REFERENCE = SKILLS / "learning" / "references" / "setup-and-update.md"
 GIT_REFERENCE = SKILLS / "learning" / "references" / "git.md"
 WORKING_REFERENCE = SKILLS / "learning" / "references" / "working.md"
 
@@ -60,10 +59,17 @@ def test_the_framework_names_no_course():
 
 
 def test_learning_skill_checks_for_e0_before_running_status():
+    """e0 ships in the repo. The first command of a conversation carries the upgrade note."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert ".exit0/e0" in text
-    assert "references/setup-and-update.md" in text
-    assert text.index("references/setup-and-update.md") < text.index("e0 status")
+    assert "is part of this repo" in text
+    assert "releases/latest/download/e0" in text
+    assert text.index("releases/latest/download/e0") < text.index("e0 status")
+    assert "first `e0` of the conversation" in text
+    assert "say `upgrade`" in text
+    assert "say it only that first time" in text
+    assert "The student runs that command" in text
+    assert "RELEASE=" not in text
 
 
 def test_learning_skill_has_the_agent_personalize_silently():
@@ -112,13 +118,6 @@ def test_learning_skill_tells_success_from_failure_by_the_problem_key():
     assert "the `message` in plain words" not in text
 
 
-def test_setup_reference_uses_the_problem_not_the_whole_message():
-    """init failures have no kind, so message is the problem plus the guidance."""
-    text = SETUP_REFERENCE.read_text(encoding="utf-8")
-    assert "the `problem` in plain words" in text
-    assert "the `message` in plain words" not in text
-
-
 def test_learning_skill_lets_e0_own_the_merge_conflict_message():
     """A merge conflict is a problem, same as git missing. The skill has no row; git.md
     has no section. Reading e0 already sends the message and follows guidance."""
@@ -132,33 +131,16 @@ def test_learning_skill_lets_e0_own_the_merge_conflict_message():
     assert "http.server" in e0 and "conflict.html" in e0
 
 
-def test_setup_reference_has_the_bootstrap_and_points_back():
-    text = SETUP_REFERENCE.read_text(encoding="utf-8")
-    assert "curl" in text
+def test_missing_e0_is_the_latest_release_and_not_a_pip_package():
+    """When e0 is missing, the student downloads latest. There is no pip package and no pinned tag."""
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    assert "the student puts it back" in text
     assert ".exit0/e0 init" in text
-    assert "learning" in text
-
-
-def test_setup_reference_mentions_the_cheap_model():
-    text = SETUP_REFERENCE.read_text(encoding="utf-8").lower()
-    assert "cheap" in text or "cheapest" in text
-
-
-def test_setup_reference_falls_back_to_the_latest_release():
-    """A pinned tag that was never published must not stop a student. Latest is the net."""
-    text = SETUP_REFERENCE.read_text(encoding="utf-8")
     assert "releases/latest/download/e0" in text
-    assert text.count("releases/latest/download/e0") >= 2, "bash and PowerShell both need it"
-
-
-def test_setup_reference_names_curl_as_the_only_source_and_the_way_out():
-    """A cheap model once told the student to `pip install exit0`. There is no such package."""
-    text = SETUP_REFERENCE.read_text(encoding="utf-8")
-    assert "comes only from the `curl` commands" in text
+    assert "curl.exe" in text
     assert "not a pip package" in text
-    assert "https://github.com/exit0-io/e0/issues" in text
-    skill = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
-    assert "get it **only** by following [First-time setup]" in skill
+    assert "RELEASE=" not in text
+    assert "Welcome" not in text
 
 
 def test_learning_skill_separates_looking_at_a_task_from_starting_it():
@@ -316,10 +298,11 @@ def test_git_reference_lets_the_student_name_the_branch_first():
 
 def test_only_the_agent_runs_e0():
     """conversation (2026-09-23, 'am i ready to start?'): the agent told the student to 'run e0
-    check'. The student never runs e0; the agent runs it and says what it means."""
+    check'. The student never runs an e0 command. The upgrade note is the one command they run,
+    and e0 already wrote it."""
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
-    assert "You run `e0 check`" in text
-    assert "never ask the student to run it" in text
+    assert "You run `e0`" in text
+    assert "The student runs the command in `upgrade`" in text
     assert not re.search(r"student[^.]*\bruns `e0", text), "no sentence has the student run e0"
 
 
@@ -522,7 +505,6 @@ def test_learning_skill_links_its_references_from_the_repo_root():
     text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
     assert "](references/" not in text
     assert "](.exit0/skills/learning/references/git.md" in text
-    assert "](.exit0/skills/learning/references/setup-and-update.md" in text
 
 
 def test_learning_skill_bolds_and_defines_first_time_terms():
@@ -572,9 +554,9 @@ def test_learning_skill_never_sends_the_student_to_skill_files():
     assert "replace the branch part with [git.md]" not in text
 
 
-def test_setup_reference_has_no_permission_nag():
+def test_learning_skill_has_no_permission_nag():
     """From conversation.md: the 'allow e0 to run without asking' note is gone."""
-    text = SETUP_REFERENCE.read_text(encoding="utf-8").lower()
+    text = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8").lower()
     assert "without asking" not in text
     assert "allow" not in text
 
@@ -808,10 +790,11 @@ def test_release_workflow_publishes_the_pinned_version():
     assert "cli/bin/e0" in text
 
 
-def test_the_pinned_version_matches_every_release_the_setup_reference_downloads():
-    """Both name the same git tag: e0 fetches its skills from the ref it was released as."""
-    setup = SETUP_REFERENCE.read_text(encoding="utf-8")
-    releases = set(re.findall(r'RELEASE="?(v[0-9][0-9.]*)"?', setup))
-    version = re.search(r'^E0_VERSION = "(\S+)"', E0_PATH.read_text(encoding="utf-8"), re.MULTILINE).group(1)
-    assert releases, "the setup reference must pin a release"
-    assert releases == {version}
+def test_the_upgrade_command_downloads_latest_and_names_no_pinned_release():
+    """The student command is the latest-release URL. e0 still records its own version."""
+    url = "https://github.com/exit0-io/e0/releases/latest/download/e0"
+    skill = (SKILLS / "learning" / "SKILL.md").read_text(encoding="utf-8")
+    source = E0_PATH.read_text(encoding="utf-8")
+    assert url in skill and url in source
+    assert "RELEASE=" not in skill and "RELEASE=" not in source
+    assert re.search(r'^E0_VERSION = "v\d', source, re.MULTILINE)

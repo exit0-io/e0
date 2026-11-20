@@ -59,7 +59,7 @@ def test_init_installs_the_learning_skill_with_its_references(run_e0, student_re
     run_e0(["init"], student_repo)
     skills = student_repo / ".exit0" / "skills"
     assert (skills / "learning" / "SKILL.md").exists()
-    assert (skills / "learning" / "references" / "setup-and-update.md").exists()
+    assert (skills / "learning" / "references" / "git.md").exists()
     assert not (skills / "setup-and-update").exists()
 
 

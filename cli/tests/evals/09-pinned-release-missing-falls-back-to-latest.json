@@ -1,16 +1,12 @@
 {
-  "from": "maintainer request: if the pinned release is not available, download the latest release",
-  "pinned_release_missing": true,
+  "from": "2026-11-20: e0 ships in the repo. When it is missing, the student runs the latest curl. The agent does not download it, and the command pins no version",
+  "missing_e0": true,
   "turns": [
     {
       "say": "hi",
-      "must_run": [
-        "raw\\.githubusercontent\\.com/exit0-io/e0/",
-        "github\\.com/exit0-io/e0/releases/latest/download/e0",
-        "e0 init"
-      ],
-      "must_match": ["welcome"],
-      "must_not_run": ["api\\.github\\.com", "gh release", "ls-remote", "/tags"]
+      "must_match": ["releases/latest/download/e0"],
+      "must_not_match": ["RELEASE=", "raw\\.githubusercontent\\.com/exit0-io/e0/v"],
+      "must_not_run": ["curl", "chmod", "\\bpip3?\\b"]
     }
   ]
 }

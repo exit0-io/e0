@@ -11,8 +11,10 @@ Run them on purpose:
 
     E0_AGENT_EVALS=1 ../.venv/bin/python -m pytest tests/test_agent_evals.py -v
 
-Scenarios with "bootstrap": true download e0 from GitHub. They also need
-E0_AGENT_EVALS_NETWORK=1, because they only pass once the pinned release is published.
+The template ships e0. Scenarios with "missing_e0": true delete that copy, so the
+agent has to ask the student to put it back.
+Scenarios with "bootstrap": true also start without e0 and download it from GitHub. They
+need E0_AGENT_EVALS_NETWORK=1.
 Scenarios with "pinned_release_missing": true bootstrap offline: a fake curl answers 404
 for the pinned release and serves the local e0 as the latest release.
 Scenarios with "downloads_fail": true get a fake curl that answers 404 for every download.
@@ -130,6 +132,13 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin, write_ta
     def _make(scenario):
         repo = tmp_path / "student-repo"
         shutil.copytree(ROOT_TEMPLATE, repo, symlinks=True)
+        if (
+            scenario.get("bootstrap")
+            or scenario.get("missing_e0")
+            or scenario.get("pinned_release_missing")
+            or scenario.get("downloads_fail")
+        ):
+            (repo / ".exit0" / "e0").unlink(missing_ok=True)
         (repo / ".exit0" / "config.json").write_text(
             json.dumps(
                 {
@@ -178,7 +187,7 @@ def agent_repo(tmp_path, content_server, framework_server, fake_gh_bin, write_ta
             serve_latest = not scenario.get("downloads_fail")
             curl.write_text(FAKE_CURL.format(serve_latest=serve_latest), encoding="utf-8")
             curl.chmod(0o755)
-        elif not scenario.get("bootstrap"):
+        elif not scenario.get("bootstrap") and not scenario.get("missing_e0"):
             shutil.copy(E0_PATH, repo / ".exit0" / "e0")
             (repo / ".exit0" / "e0").chmod(0o755)
             subprocess.run([str(repo / ".exit0" / "e0"), "init"], cwd=repo, check=True, capture_output=True)

@@ -28,7 +28,7 @@ python -m coverage combine --rcfile=setup.cfg && python -m coverage report --rcf
 
 ## Releasing
 
-Bump `E0_VERSION` in `cli/bin/e0` and `RELEASE=` in `cli/skills/learning/references/setup-and-update.md` to the same tag. When the change lands on `main`, the `Release e0` GitHub Actions workflow creates the tag and the release, and uploads `e0` as a release asset. The skill downloads the pinned tag and falls back to `releases/latest/download/e0`.
+Bump `E0_VERSION` in `cli/bin/e0`. When the change lands on `main`, the `Release e0` GitHub Actions workflow creates the tag and the release, and uploads `e0` as a release asset at `releases/latest/download/e0`. The course template ships a copy of `e0`. A student whose copy is an older compatible release sees an upgrade note, with a command that downloads that latest URL.
 
 ## Where progress lives
 

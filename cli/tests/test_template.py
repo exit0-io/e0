@@ -17,7 +17,7 @@ def test_template_has_required_files():
         ".github/copilot-instructions.md",
         ".exit0/config.json",
         LEARNING_SKILL,
-        ".exit0/skills/learning/references/setup-and-update.md",
+        ".exit0/skills/learning/references/git.md",
         ".gitignore",
     ):
         assert (TEMPLATE / name).exists(), f"missing {name}"
@@ -37,15 +37,20 @@ def test_no_gitmodules_file():
     assert not (TEMPLATE / ".gitmodules").exists(), ".gitmodules must be removed"
 
 
-def test_no_submodule_dirs():
-    assert not (TEMPLATE / ".exit0" / "e0").exists()
+def test_template_ships_e0_as_a_file():
+    """The agent finds e0 already in the repo, so the first day is not a download."""
+    shipped = TEMPLATE / ".exit0" / "e0"
+    assert shipped.is_file()
+    assert not shipped.is_symlink()
+    assert shipped.read_bytes() == (ROOT / "cli" / "bin" / "e0").read_bytes()
     assert not (TEMPLATE / ".exit0" / "content").exists()
 
 
 def test_gitignore_covers_generated_dirs():
     text = (TEMPLATE / ".gitignore").read_text(encoding="utf-8")
-    # .exit0/* with exception covers catalog.json, skills/, state/
+    # .exit0/* with exception covers catalog.json, skills/, state/. e0 itself ships.
     assert ".exit0/*" in text or ".exit0/" in text
+    assert text.index(".exit0/*") < text.index("!.exit0/e0")
     for entry in ("content/", "tests/school-checks/"):
         assert entry in text, f".gitignore missing: {entry}"
 

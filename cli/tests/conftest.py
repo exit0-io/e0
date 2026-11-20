@@ -12,6 +12,9 @@ import threading
 
 import pytest
 
+# e0 asks GitHub whether a newer release exists. Tests stay offline; the upgrade tests opt in.
+os.environ.setdefault("E0_SKIP_UPGRADE_CHECK", "1")
+
 FIXTURE_COURSE = pathlib.Path(__file__).resolve().parents[2] / "courses" / "demo" / "content"
 FRAMEWORK_SRC = pathlib.Path(__file__).resolve().parents[1]   # cli/
 E0_PATH = FRAMEWORK_SRC / "bin" / "e0"
