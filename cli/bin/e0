@@ -7,13 +7,15 @@ Single file, standard library only, no install step. Never crashes: every invoca
 exits 0 and prints exactly one JSON object to stdout, so a failure is something the
 agent can read aloud rather than a dead end.
 
-Envelope: every reply is `{"command", "message", "guidance", "data"}`. `message` is for
-the student, said as written. `guidance` is for the agent. Either may be empty.
+Envelope: every reply is `{"command", "message", "guidance", "data", "upgrade"}`. `message`
+is for the student, said as written. `guidance` is for the agent. `upgrade` is empty, or
+a note for the student when a newer compatible release exists, including the command they run.
 """
 
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import platform
 import random
@@ -32,12 +34,13 @@ E0_VERSION = "v1.3"
 
 def reply(command, data=None, message="", guidance=""):
     """Every command returns this. `message` is for the student. `guidance` is for the agent.
-    Either may be empty. `data` holds the facts."""
+    Either may be empty. `data` holds the facts. `upgrade` is filled in by `main`."""
     return {
         "command": command,
         "message": message or "",
         "guidance": guidance or "",
         "data": data if data is not None else {},
+        "upgrade": "",
     }
 
 def problem(command, summary, guidance, message=None, data=None, tell=False):
@@ -137,6 +140,78 @@ def write_profile(root, profile):
 def detect_profile(root):
     names = {"darwin": "macos", "windows": "windows"}
     return {"os": names.get(platform.system().lower(), "linux")}
+
+
+# A newer release is compatible when it has the same major version. The note's command
+# downloads the latest release, so the note appears only when that latest release itself
+# is the greater compatible one.
+LATEST_E0_URL = "https://github.com/exit0-io/e0/releases/latest/download/e0"
+
+def version_parts(tag):
+    """(major, minor, patch) for 'v1.3' or 'v1.3.1'. None when it is not that shape."""
+    match = re.fullmatch(r"v(\d+)(?:\.(\d+))?(?:\.(\d+))?", tag or "")
+    if not match:
+        return None
+    return tuple(int(part or 0) for part in match.groups())
+
+def newer_compatible(current, candidate):
+    """True when `candidate` is a later release of the same major version."""
+    have = version_parts(current)
+    newer = version_parts(candidate)
+    if not have or not newer:
+        return False
+    return newer[0] == have[0] and newer > have
+
+def latest_release_tag():
+    """The tag of the newest GitHub release, or None when GitHub cannot be reached."""
+    import urllib.request
+    request = urllib.request.Request(
+        "https://api.github.com/repos/exit0-io/e0/releases/latest",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "e0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=4) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    tag = payload.get("tag_name") if isinstance(payload, dict) else None
+    return tag if isinstance(tag, str) else None
+
+def upgrade_command(os_name):
+    """The command the student runs. It always takes the latest release, never a pinned tag."""
+    if os_name == "windows":
+        return f'curl.exe -fsSL "{LATEST_E0_URL}" -o .exit0/e0\npython .exit0/e0 init'
+    return f'curl -fsSL "{LATEST_E0_URL}" -o .exit0/e0 && chmod +x .exit0/e0 && .exit0/e0 init'
+
+def upgrade_note(latest, os_name):
+    return (
+        f"A newer e0 is available ({latest}). You have {E0_VERSION}. "
+        f"{latest} works with this course. To upgrade, run this from the repo folder:\n\n"
+        f"```\n{upgrade_command(os_name)}\n```\n\n"
+        "After it finishes, start a new chat."
+    )
+
+def upgrade_message(root):
+    """The student note when a newer compatible release exists. Empty otherwise.
+
+    Every reply carries it. The learning skill says it only on the first e0 of the
+    conversation.
+    """
+    if os.environ.get("E0_SKIP_UPGRADE_CHECK"):
+        return ""
+    latest = latest_release_tag()
+    if latest and newer_compatible(E0_VERSION, latest):
+        return upgrade_note(latest, detect_profile(root)["os"])
+    return ""
+
+def attach_upgrade(result):
+    """Put `upgrade` on a reply. Empty when there is nothing to report."""
+    if os.environ.get("E0_SKIP_UPGRADE_CHECK"):
+        result["upgrade"] = ""
+        return result
+    root = repo_root()
+    result["upgrade"] = upgrade_message(root) if root else ""
+    return result
 
 # A dismissed reminder sleeps this long. Not progress: progress lives in GitHub.
 DISMISS_DAYS = 7
@@ -551,7 +626,6 @@ def pr_diff(root, pr):
 FRAMEWORK_SKILLS = {
     "learning": [
         "SKILL.md",
-        "references/setup-and-update.md",
         "references/git.md",
         "assets/checkout.html",
         "assets/conflict.html",
@@ -2525,6 +2599,7 @@ def main(argv=None):
             tell=True,
         )
 
+    attach_upgrade(result)
     print(json.dumps(result, indent=2))
     return 0
 

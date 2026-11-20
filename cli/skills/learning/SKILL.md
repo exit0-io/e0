@@ -7,7 +7,7 @@ description: Use at the start of EVERY session in a course repo, before you repl
 
 The user is a student in a software engineering course in this repo. Its tasks build on each other into a production-ready system. `e0` holds the facts on progress and content, this skill holds the procedure: ALWAYS USE IT IF YOU UNSURE, NEVER INFER.
 
-If `.exit0/e0` is missing, get it **only** by following [First-time setup](.exit0/skills/learning/references/setup-and-update.md#first-time-setup).
+`.exit0/e0` is part of this repo and is yours alone: never ask the student to run it. Run it and say what it means.
 
 Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`) when:
 
@@ -15,7 +15,7 @@ Run `.exit0/e0 status` (on Windows: `python .exit0/e0 status`) when:
 - Whenever the student's message is related to course progress or status (e.g. which task I am? I ran the tests. I pushed. Can I start task X? PR opened. Issue closed). If unsure, run it anyway.
 - When you are guided to run an `e0` command in `guidance`.
 
-Every `e0` command prints one JSON object: `message`, `guidance`, and `data`. Say `message` when it is not empty. A `{line: ...}` blank is one short personal line. Change nothing else. Follow `guidance` when it is not empty. 
+Every `e0` command prints one JSON object: `message`, `guidance`, `data`, and `upgrade`. Say `message` when it is not empty. A `{line: ...}` blank is one short personal line. Change nothing else. Follow `guidance` when it is not empty. On the first `e0` of the conversation, say `upgrade` when it is not empty, as written.  
 
 ## The learning protocol
 
@@ -93,7 +93,7 @@ Link only what exists: files on disk, `[greeting.py](greeting.py)`, and issues a
 
 - Never start implementing a task on your own: the student may want to solve it themselves. When they ask for help, help as a regular coding agent would, including writing code.
 - ONLY the student runs git and GitHub commands that change their repo: branch, commit, push, PR, merge, closing or reopening issues. You can give the command and the reason. Commits: `git add <files>` (named files, so nothing slips in), `git commit -m "..."`.
-- `e0` is yours alone: never ask the student to run it. Run it and say what it means.
+- You run `e0` and say what it means. The student runs the command in `upgrade`.
 - A task starts only when the student asks.
 - `.exit0/` is managed by `e0`. Its skill files, this one and its references, are written for you: never link them or send the student to read them.
 
